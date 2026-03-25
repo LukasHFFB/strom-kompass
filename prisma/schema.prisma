@@ -1,0 +1,68 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider   = "prisma-client-js"
+  engineType = "library"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// This schema uses unique composite keys to enforce idempotency and painless retrospective updates.
+
+model PriceData {
+  id        String   @id @default(cuid())
+  timestamp DateTime
+  price     Float    // EUR/MWh
+  source    String   // 'entsoe' | 'netztransparenz'
+  
+  fetchedAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([timestamp, source])
+  @@index([timestamp])
+}
+
+model GenerationData {
+  id         String   @id @default(cuid())
+  timestamp  DateTime
+  energyType String   // e.g., 'solar', 'wind_onshore', 'coal'
+  value      Float    // MW
+  source     String
+  
+  fetchedAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([timestamp, energyType, source])
+  @@index([timestamp])
+}
+
+model ForecastData {
+  id           String   @id @default(cuid())
+  timestamp    DateTime
+  forecastType String   // e.g., 'day_ahead', 'projection'
+  energyType   String
+  value        Float    // MW
+  source       String
+  
+  fetchedAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([timestamp, forecastType, energyType, source])
+  @@index([timestamp])
+}
+
+model CapacityData {
+  id         String   @id @default(cuid())
+  date       DateTime // Truncated to YYYY-MM-DD
+  energyType String
+  value      Float    // MW
+  source     String
+  
+  fetchedAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([date, energyType, source])
+}

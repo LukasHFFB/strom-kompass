@@ -32,6 +32,18 @@ import {
   parseProjection,
 } from '@/lib/netztransparenz/parser';
 
+// Persistence
+import {
+  queryPriceData,
+  upsertPriceData,
+  queryGenerationData,
+  upsertGenerationData,
+  queryForecastData,
+  upsertForecastData,
+  queryCapacityData,
+  upsertCapacityData,
+} from './persistence';
+
 // ─── Price Data ─────────────────────────────────────────────────────────
 
 export async function getConsolidatedPrices(
@@ -44,8 +56,19 @@ export async function getConsolidatedPrices(
     return wrapResponse(cached, DataSource.ENTSOE, from, to);
   }
 
+  // 1. Try DB first
+  const dbData = await queryPriceData(from, to, DataSource.ENTSOE);
+  if (dbData.length > 0) {
+    return wrapResponse(dbData, DataSource.ENTSOE, from, to);
+  }
+
+  // 2. Fallback to API
   const raw = await fetchDayAheadPrices(from, to);
   const data = raw ? parseDayAheadPrices(raw) : [];
+
+  if (data.length > 0) {
+    await upsertPriceData(data);
+  }
 
   setCache(key, data, CACHE_TTL.PRICES);
   return wrapResponse(data, DataSource.ENTSOE, from, to);
@@ -63,8 +86,19 @@ export async function getGenerationMix(
     return wrapResponse(cached, DataSource.ENTSOE, from, to);
   }
 
+  // 1. Try DB first
+  const dbData = await queryGenerationData(from, to, DataSource.ENTSOE);
+  if (dbData.length > 0) {
+    return wrapResponse(dbData, DataSource.ENTSOE, from, to);
+  }
+
+  // 2. Fallback to API
   const raw = await fetchActualGeneration(from, to);
   const data = raw ? parseActualGeneration(raw) : [];
+
+  if (data.length > 0) {
+    await upsertGenerationData(data);
+  }
 
   setCache(key, data, CACHE_TTL.GENERATION);
   return wrapResponse(data, DataSource.ENTSOE, from, to);
@@ -86,8 +120,24 @@ export async function getInstalledCapacityData(
     );
   }
 
+  // 1. Try DB first
+  const dbData = await queryCapacityData(year, DataSource.ENTSOE);
+  if (dbData.length > 0) {
+    return wrapResponse(
+      dbData,
+      DataSource.ENTSOE,
+      new Date(year, 0, 1),
+      new Date(year, 11, 31)
+    );
+  }
+
+  // 2. Fallback to API
   const raw = await fetchInstalledCapacity(year);
   const data = raw ? parseInstalledCapacity(raw, year) : [];
+
+  if (data.length > 0) {
+    await upsertCapacityData(data);
+  }
 
   setCache(key, data, CACHE_TTL.CAPACITY);
   return wrapResponse(
@@ -110,8 +160,19 @@ export async function getMarketValues(
     return wrapResponse(cached, DataSource.NETZTRANSPARENZ, from, to);
   }
 
+  // 1. Try DB first
+  const dbData = await queryPriceData(from, to, DataSource.NETZTRANSPARENZ);
+  if (dbData.length > 0) {
+    return wrapResponse(dbData, DataSource.NETZTRANSPARENZ, from, to);
+  }
+
+  // 2. Fallback to API
   const csv = await fetchSpotMarketPrices(from, to);
   const data = parseSpotMarketPrices(csv);
+
+  if (data.length > 0) {
+    await upsertPriceData(data);
+  }
 
   setCache(key, data, CACHE_TTL.MARKET_VALUES);
   return wrapResponse(data, DataSource.NETZTRANSPARENZ, from, to);
@@ -130,14 +191,26 @@ export async function getForecasts(
     return wrapResponse(cached, DataSource.NETZTRANSPARENZ, from, to);
   }
 
+  const energyType =
+    type === 'solar' ? EnergyType.SOLAR : EnergyType.WIND_ONSHORE;
+
+  // 1. Try DB first
+  const dbData = await queryForecastData(from, to, energyType, DataSource.NETZTRANSPARENZ);
+  if (dbData.length > 0) {
+    return wrapResponse(dbData, DataSource.NETZTRANSPARENZ, from, to);
+  }
+
+  // 2. Fallback to API
   const csv =
     type === 'solar'
       ? await fetchSolarProjection(from, to)
       : await fetchWindProjection(from, to);
 
-  const energyType =
-    type === 'solar' ? EnergyType.SOLAR : EnergyType.WIND_ONSHORE;
   const data = parseProjection(csv, energyType);
+
+  if (data.length > 0) {
+    await upsertForecastData(data);
+  }
 
   setCache(key, data, CACHE_TTL.FORECASTS);
   return wrapResponse(data, DataSource.NETZTRANSPARENZ, from, to);
