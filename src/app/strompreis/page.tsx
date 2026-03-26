@@ -14,6 +14,8 @@ export const metadata: Metadata = {
   ],
 };
 
+import PriceDashboard from '@/components/dashboards/PriceDashboard';
+
 export default function StrompreisPage() {
   return (
     <>
@@ -23,31 +25,7 @@ export default function StrompreisPage() {
         historischer Verlauf. Datenquelle: ENTSO-E Transparency Platform.
       </p>
 
-      <div className="grid grid-3">
-        <div className="card">
-          <h2>Aktueller Preis</h2>
-          <div className="value">—</div>
-          <div className="subtitle">EUR/MWh · Day-Ahead</div>
-        </div>
-        <div className="card">
-          <h2>Tagesdurchschnitt</h2>
-          <div className="value">—</div>
-          <div className="subtitle">EUR/MWh</div>
-        </div>
-        <div className="card">
-          <h2>Preisspanne heute</h2>
-          <div className="value">—</div>
-          <div className="subtitle">Min / Max</div>
-        </div>
-      </div>
-
-      <div className="card">
-        <h2>Preisverlauf</h2>
-        <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-          Interaktiver Chart kommt in Phase 2. Die API-Daten sind bereits über{' '}
-          <code>/api/energy/prices</code> verfügbar.
-        </p>
-      </div>
+      <PriceDashboard />
     </>
   );
 }

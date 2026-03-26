@@ -15,6 +15,8 @@ export const metadata: Metadata = {
   ],
 };
 
+import ErzeugungDashboard from '@/components/dashboards/ErzeugungDashboard';
+
 export default function ErzeugungPage() {
   return (
     <>
@@ -24,21 +26,7 @@ export default function ErzeugungPage() {
         Deutschland. Datenquellen: ENTSO-E, Netztransparenz.de.
       </p>
 
-      <div className="card">
-        <h2>Installierte Leistung (aktuelles Jahr)</h2>
-        <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-          Kapazitäts-Übersicht kommt in Phase 2. API-Daten sind über{' '}
-          <code>/api/energy/capacity</code> verfügbar.
-        </p>
-      </div>
-
-      <div className="card">
-        <h2>Erzeugungsmix</h2>
-        <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-          Echtzeit-Erzeugungsdaten sind über{' '}
-          <code>/api/energy/generation</code> verfügbar.
-        </p>
-      </div>
+      <ErzeugungDashboard />
     </>
   );
 }

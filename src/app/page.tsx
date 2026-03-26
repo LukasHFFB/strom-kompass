@@ -41,6 +41,8 @@ const ENDPOINTS: ApiEndpoint[] = [
   },
 ];
 
+import HomeDashboard from '@/components/dashboards/HomeDashboard';
+
 export default function HomePage() {
   const [results, setResults] = useState<Record<string, { status: string; data?: unknown; error?: string }>>({});
   const [loading, setLoading] = useState<Record<string, boolean>>({});
@@ -85,7 +87,14 @@ export default function HomePage() {
 
   return (
     <>
-      <h2 style={{ margin: '1rem 0' }}>API Dashboard</h2>
+      <h2 style={{ margin: '1rem 0' }}>Markt-Übersicht</h2>
+      <p style={{ color: 'var(--text-muted)', marginBottom: '1.5rem' }}>
+        Deutschlands Energiemarkt auf einen Blick — Preise und Erzeugung in Echtzeit.
+      </p>
+
+      <HomeDashboard />
+
+      <h2 style={{ margin: '3rem 0 1rem 0' }}>API Dashboard</h2>
       <p style={{ color: 'var(--text-muted)', marginBottom: '1.5rem' }}>
         Test-Oberfläche für die Energiedaten-APIs. Klicke auf einen Endpoint oder
         teste alle gleichzeitig.
