@@ -10,16 +10,12 @@ import {
 
 /**
  * Upsert price data points.
- * Handles retrospective updates by using the unique constraint on [timestamp, source].
+ * Uses individual upserts with Promise.allSettled to avoid transaction timeouts on remote DBs.
  */
 export async function upsertPriceData(data: PriceDataPoint[]) {
   if (data.length === 0) return;
 
-  // We use createMany with skipDuplicates: false is not supported for upsert in createMany 
-  // (Prisma doesn't support bulk upsert directly in a single call with different values).
-  // So we use a transaction with multiple upserts.
-  
-  await prisma.$transaction(
+  const results = await Promise.allSettled(
     data.map((point) =>
       prisma.priceData.upsert({
         where: {
@@ -39,6 +35,11 @@ export async function upsertPriceData(data: PriceDataPoint[]) {
       })
     )
   );
+
+  const failed = results.filter((r) => r.status === 'rejected');
+  if (failed.length > 0) {
+    console.error(`[upsertPriceData] ${failed.length}/${data.length} upserts failed`);
+  }
 }
 
 /**
@@ -47,7 +48,7 @@ export async function upsertPriceData(data: PriceDataPoint[]) {
 export async function upsertGenerationData(data: GenerationDataPoint[]) {
   if (data.length === 0) return;
 
-  await prisma.$transaction(
+  const results = await Promise.allSettled(
     data.map((point) =>
       prisma.generationData.upsert({
         where: {
@@ -69,6 +70,11 @@ export async function upsertGenerationData(data: GenerationDataPoint[]) {
       })
     )
   );
+
+  const failed = results.filter((r) => r.status === 'rejected');
+  if (failed.length > 0) {
+    console.error(`[upsertGenerationData] ${failed.length}/${data.length} upserts failed`);
+  }
 }
 
 /**
@@ -77,13 +83,13 @@ export async function upsertGenerationData(data: GenerationDataPoint[]) {
 export async function upsertForecastData(data: ForecastDataPoint[]) {
   if (data.length === 0) return;
 
-  await prisma.$transaction(
+  const results = await Promise.allSettled(
     data.map((point) =>
       prisma.forecastData.upsert({
         where: {
           timestamp_forecastType_energyType_source: {
             timestamp: new Date(point.timestamp),
-            forecastType: 'projection', // Defaulting to projection for now
+            forecastType: 'projection',
             energyType: point.type,
             source: point.source,
           },
@@ -101,6 +107,11 @@ export async function upsertForecastData(data: ForecastDataPoint[]) {
       })
     )
   );
+
+  const failed = results.filter((r) => r.status === 'rejected');
+  if (failed.length > 0) {
+    console.error(`[upsertForecastData] ${failed.length}/${data.length} upserts failed`);
+  }
 }
 
 /**
@@ -109,12 +120,12 @@ export async function upsertForecastData(data: ForecastDataPoint[]) {
 export async function upsertCapacityData(data: InstalledCapacity[]) {
   if (data.length === 0) return;
 
-  await prisma.$transaction(
+  const results = await Promise.allSettled(
     data.map((point) =>
       prisma.capacityData.upsert({
         where: {
           date_energyType_source: {
-            date: new Date(point.year, 0, 1), // Standardizing to start of year
+            date: new Date(point.year, 0, 1),
             energyType: point.type,
             source: point.source,
           },
@@ -131,6 +142,11 @@ export async function upsertCapacityData(data: InstalledCapacity[]) {
       })
     )
   );
+
+  const failed = results.filter((r) => r.status === 'rejected');
+  if (failed.length > 0) {
+    console.error(`[upsertCapacityData] ${failed.length}/${data.length} upserts failed`);
+  }
 }
 
 /**
