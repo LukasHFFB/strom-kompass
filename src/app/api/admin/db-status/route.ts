@@ -6,8 +6,9 @@ export const dynamic = 'force-dynamic';
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const password = request.headers.get('x-admin-password');
+  const expectedPassword = process.env.ADMIN_PASSWORD || 'Alexander1234!!';
 
-  if (password !== process.env.ADMIN_PASSWORD) {
+  if (password !== expectedPassword) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
