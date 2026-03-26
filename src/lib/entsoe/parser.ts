@@ -9,7 +9,8 @@ import {
 
 // ─── Helpers ────────────────────────────────────────────────────────────
 
-function ensureArray<T>(val: T | T[]): T[] {
+function ensureArray<T>(val: T | T[] | undefined | null): T[] {
+  if (!val) return [];
   return Array.isArray(val) ? val : [val];
 }
 
@@ -67,10 +68,13 @@ export function parseDayAheadPrices(raw: any): PriceDataPoint[] {
     const points = ensureArray(period.Point);
 
     for (const pt of points) {
+      if (!pt?.position) continue;
       const pos = parseInt(pt.position, 10);
+      const priceVal = parseFloat(pt['price.amount']);
+      if (isNaN(pos) || isNaN(priceVal)) continue;
       result.push({
         timestamp: resolveTimestamp(start, resolution, pos),
-        price: parseFloat(pt['price.amount']),
+        price: priceVal,
         unit: 'EUR/MWh',
         source: DataSource.ENTSOE,
       });
@@ -105,11 +109,14 @@ export function parseActualGeneration(raw: any): GenerationDataPoint[] {
     const points = ensureArray(period.Point);
 
     for (const pt of points) {
+      if (!pt?.position) continue;
       const pos = parseInt(pt.position, 10);
+      const qty = parseFloat(pt.quantity);
+      if (isNaN(pos) || isNaN(qty)) continue;
       result.push({
         timestamp: resolveTimestamp(start, resolution, pos),
         type: energyType,
-        value: parseFloat(pt.quantity),
+        value: qty,
         unit: 'MW',
         source: DataSource.ENTSOE,
       });
@@ -145,9 +152,12 @@ export function parseInstalledCapacity(
     const points = ensureArray(period.Point);
     // For installed capacity, we typically have a single point per series
     for (const pt of points) {
+      if (!pt?.quantity) continue;
+      const qty = parseFloat(pt.quantity);
+      if (isNaN(qty)) continue;
       result.push({
         type: energyType,
-        capacity: parseFloat(pt.quantity),
+        capacity: qty,
         unit: 'MW',
         year,
         source: DataSource.ENTSOE,
