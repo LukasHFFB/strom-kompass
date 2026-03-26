@@ -11,7 +11,11 @@ import { useTooltip, TooltipWithBounds, defaultStyles } from '@visx/tooltip';
 import { localPoint } from '@visx/event';
 import { bisector } from 'd3-array';
 import { ParentSize } from '@visx/responsive';
-import { TYPE_COLORS, TYPE_LABELS } from './CapacityBarChart';
+import { ENERGY_TYPE_LABELS } from '@/lib/utils/translations';
+import { EnergyType } from '@/types/energy';
+import { TYPE_COLORS } from './CapacityBarChart';
+
+const TYPE_LABELS = ENERGY_TYPE_LABELS;
 
 // ─── Types ──────────────────────────────────────────────────────────────
 
@@ -283,7 +287,7 @@ function GenerationStackedAreaInner({ data, width, height }: InnerProps) {
                       display: 'inline-block',
                     }}
                   />
-                  {TYPE_LABELS[key] ?? key}
+                  {ENERGY_TYPE_LABELS[(key as any) as EnergyType] || key}
                 </span>
                 <span style={{ fontWeight: 600 }}>
                   {((tooltipData.row[key] as number) / 1000).toFixed(1)} GW
@@ -305,7 +309,7 @@ function GenerationStackedAreaInner({ data, width, height }: InnerProps) {
                 display: 'inline-block',
               }}
             />
-            {TYPE_LABELS[key] ?? key}
+            {ENERGY_TYPE_LABELS[(key as any) as EnergyType] || key}
           </div>
         ))}
       </div>

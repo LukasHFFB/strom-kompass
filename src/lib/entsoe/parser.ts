@@ -2,6 +2,7 @@ import { ENTSOE_CONFIG } from '@/config/api';
 import {
   PriceDataPoint,
   GenerationDataPoint,
+  LoadDataPoint,
   InstalledCapacity,
   DataSource,
   EnergyType,
@@ -177,6 +178,45 @@ export function parseInstalledCapacity(
   }
 
   return Array.from(aggregated.values());
+}
+
+// ─── Actual Total Load ──────────────────────────────────────────────────
+
+export function parseActualLoad(raw: any): LoadDataPoint[] {
+  const result: LoadDataPoint[] = [];
+  const doc =
+    raw?.GL_MarketDocument ?? 
+    raw?.['GL_MarketDocument'] ??
+    raw?.Load_MarketDocument ??
+    raw?.['Load_MarketDocument'];
+
+  if (!doc) return result;
+
+  const seriesList = ensureArray(doc.TimeSeries);
+
+  for (const ts of seriesList) {
+    const period = ts.Period;
+    if (!period) continue;
+
+    const start = period.timeInterval?.start;
+    const resolution = period.resolution;
+    const points = ensureArray(period.Point);
+
+    for (const pt of points) {
+      if (!pt?.position) continue;
+      const pos = parseInt(pt.position, 10);
+      const qty = parseFloat(pt.quantity);
+      if (isNaN(pos) || isNaN(qty)) continue;
+      result.push({
+        timestamp: resolveTimestamp(start, resolution, pos),
+        value: qty,
+        unit: 'MW',
+        source: DataSource.ENTSOE,
+      });
+    }
+  }
+
+  return result;
 }
 
 /* eslint-enable @typescript-eslint/no-explicit-any */

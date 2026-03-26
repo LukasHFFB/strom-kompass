@@ -10,6 +10,7 @@ interface EntsoeParams {
   processType?: string;
   in_Domain?: string;
   out_Domain?: string;
+  outBiddingZone_Domain?: string;
   periodStart: string; // YYYYMMDDHHmm
   periodEnd: string;   // YYYYMMDDHHmm
   psrType?: string;
@@ -20,31 +21,46 @@ interface EntsoeParams {
  * Returns the parsed XML as a JS object, or null if no data is available.
  */
 export async function fetchEntsoe(params: EntsoeParams): Promise<unknown> {
-  const url = new URL(ENTSOE_CONFIG.baseUrl);
-  url.searchParams.set('securityToken', API_KEY);
-  url.searchParams.set('documentType', params.documentType);
+  let queryString = `documentType=${params.documentType}`;
+  if (params.processType) queryString += `&processType=${params.processType}`;
+  
+  if (params.documentType === ENTSOE_CONFIG.documentTypes.LOAD) {
+    const domain = params.outBiddingZone_Domain || ENTSOE_CONFIG.biddingZone;
+    queryString += `&outBiddingZone_Domain=${domain}`;
+  } else {
+    if (params.in_Domain) queryString += `&in_Domain=${params.in_Domain}`;
+    if (params.out_Domain) queryString += `&out_Domain=${params.out_Domain}`;
+  }
 
-  if (params.processType) url.searchParams.set('processType', params.processType);
-  if (params.in_Domain) url.searchParams.set('in_Domain', params.in_Domain);
-  if (params.out_Domain) url.searchParams.set('out_Domain', params.out_Domain);
-  url.searchParams.set('periodStart', params.periodStart);
-  url.searchParams.set('periodEnd', params.periodEnd);
-  if (params.psrType) url.searchParams.set('psrType', params.psrType);
+  queryString += `&periodStart=${params.periodStart}`;
+  queryString += `&periodEnd=${params.periodEnd}`;
+  if (params.psrType) queryString += `&psrType=${params.psrType}`;
+  queryString += `&securityToken=${API_KEY}`;
 
-  console.log(`[Entso-E] Fetching: documentType=${params.documentType} periodStart=${params.periodStart} periodEnd=${params.periodEnd}`);
+  const fullUrl = `${ENTSOE_CONFIG.baseUrl}?${queryString}`;
+  console.log(`[Entso-E] Manual URL: ${fullUrl}`);
 
-  const res = await fetch(url.toString(), {
+  const res = await fetch(fullUrl, {
     headers: { Accept: 'application/xml' },
   });
 
   const xml = await res.text();
-  const parsed = await parseStringPromise(xml, { explicitArray: false });
+  console.log(`[Entso-E] URL: ${fullUrl}`);
+  console.log(`[Entso-E] Raw XML (first 200 chars): ${xml.substring(0, 200)}`);
+  
+  let parsed: any;
+  try {
+    parsed = await parseStringPromise(xml, { explicitArray: false });
+  } catch (parseErr) {
+    console.error('[Entso-E] XML Parsing failed. Raw response:', xml);
+    throw parseErr;
+  }
 
   // Entso-E returns 200 even for "no data" — check for Acknowledgement error
   if (parsed?.Acknowledgement_MarketDocument) {
     const reason = parsed.Acknowledgement_MarketDocument?.Reason;
-    const code = reason?.code;
-    const text = reason?.text;
+    const code = reason?.code || reason?.[0]?.code;
+    const text = reason?.text || reason?.[0]?.text;
     console.log(`[Entso-E] Acknowledgement: code=${code}, text=${text}`);
     // Code 999 = "No matching data found"
     if (code === '999') return null;
@@ -117,11 +133,11 @@ export async function fetchInstalledCapacity(year: number) {
 /**
  * Fetch actual total load.
  */
-export async function fetchLoad(from: Date, to: Date) {
+export async function fetchLoad(from: Date, to: Date, biddingZone?: string) {
   return fetchEntsoe({
     documentType: ENTSOE_CONFIG.documentTypes.LOAD,
     processType: ENTSOE_CONFIG.processTypes.REALISED,
-    in_Domain: ENTSOE_CONFIG.biddingZone,
+    outBiddingZone_Domain: biddingZone || ENTSOE_CONFIG.biddingZone,
     periodStart: toEntsoeDate(from),
     periodEnd: toEntsoeDate(to),
   });

@@ -2,6 +2,7 @@ import { prisma } from './db';
 import {
   PriceDataPoint,
   GenerationDataPoint,
+  LoadDataPoint,
   ForecastDataPoint,
   InstalledCapacity,
   DataSource,
@@ -240,6 +241,62 @@ export async function queryCapacityData(year: number, source?: DataSource): Prom
     capacity: r.value,
     unit: 'MW',
     year,
+    source: r.source as DataSource,
+  }));
+}
+
+/**
+ * Upsert load data points.
+ */
+export async function upsertLoadData(data: LoadDataPoint[]) {
+  if (data.length === 0) return;
+
+  const results = await Promise.allSettled(
+    data.map((point) =>
+      prisma.loadData.upsert({
+        where: {
+          timestamp_source: {
+            timestamp: new Date(point.timestamp),
+            source: point.source,
+          },
+        },
+        update: {
+          value: point.value,
+        },
+        create: {
+          timestamp: new Date(point.timestamp),
+          value: point.value,
+          source: point.source,
+        },
+      })
+    )
+  );
+
+  const failed = results.filter((r) => r.status === 'rejected');
+  if (failed.length > 0) {
+    console.error(`[upsertLoadData] ${failed.length}/${data.length} upserts failed`);
+  }
+}
+
+/**
+ * Query load data from DB.
+ */
+export async function queryLoadData(from: Date, to: Date, source?: DataSource): Promise<LoadDataPoint[]> {
+  const records = await prisma.loadData.findMany({
+    where: {
+      timestamp: {
+        gte: from,
+        lte: to,
+      },
+      ...(source ? { source } : {}),
+    },
+    orderBy: { timestamp: 'asc' },
+  });
+
+  return records.map(r => ({
+    timestamp: r.timestamp.toISOString(),
+    value: r.value,
+    unit: 'MW',
     source: r.source as DataSource,
   }));
 }

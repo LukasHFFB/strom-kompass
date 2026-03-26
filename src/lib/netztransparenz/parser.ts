@@ -135,6 +135,48 @@ export function parseMarketValues(csv: string): MarketValue[] {
   return result;
 }
 
+// ─── Generic NTP Parser ─────────────────────────────────────────────────
+
+export function parseGenericNtp(csv: string): any[] {
+  const rows = parseCSV(csv);
+  const result: any[] = [];
+
+  for (const row of rows) {
+    const datum = row['Datum'] ?? row['Monat'] ?? row['Date'] ?? '';
+    const von = row['von'] ?? '';
+    
+    if (!datum) continue;
+
+    const timestamp = buildTimestamp(datum, von);
+    
+    // Find first numeric value that isn't 'von' or 'bis' or 'Datum'
+    let value = 0;
+    let unit = 'N/A';
+    
+    for (const [key, val] of Object.entries(row)) {
+      if (['Datum', 'von', 'bis', 'Zeitzone von', 'Zeitzone bis', 'Monat', 'Date'].includes(key)) continue;
+      
+      const num = parseGermanNumber(val);
+      if (!isNaN(num)) {
+        value = num;
+        // Try to extract unit from header (e.g., "Solar (MW)" -> "MW")
+        const unitMatch = key.match(/\(([^)]+)\)/);
+        if (unitMatch) unit = unitMatch[1];
+        break; 
+      }
+    }
+
+    result.push({
+      timestamp,
+      value: Math.round(value * 100) / 100,
+      unit,
+      source: DataSource.NETZTRANSPARENZ,
+    });
+  }
+
+  return result;
+}
+
 // Keep old export name for compatibility
 export const parseForecast = parseProjection;
 

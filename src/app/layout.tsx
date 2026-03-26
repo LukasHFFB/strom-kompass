@@ -30,9 +30,10 @@ export default function RootLayout({
           <div className="container">
             <h1>⚡ Strom-Kompass</h1>
             <nav>
-              <a href="/">Dashboard</a>
+              <a href="/">Übersicht</a>
               <a href="/strompreis">Strompreis</a>
-              <a href="/erzeugung">Erzeugung</a>
+              <a href="/erzeugung">Energiemix</a>
+              <a href="/analyse">Analyse-Tool</a>
             </nav>
           </div>
         </header>

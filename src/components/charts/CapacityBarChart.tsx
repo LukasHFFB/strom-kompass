@@ -8,6 +8,7 @@ import { AxisBottom, AxisLeft } from '@visx/axis';
 import { GridColumns } from '@visx/grid';
 import { useTooltip, TooltipWithBounds, defaultStyles } from '@visx/tooltip';
 import { ParentSize } from '@visx/responsive';
+import { ENERGY_TYPE_LABELS } from '@/lib/utils/translations';
 
 // ─── Types ──────────────────────────────────────────────────────────────
 
@@ -36,20 +37,7 @@ const TYPE_COLORS: Record<string, string> = {
   other: '#9ca3af',
 };
 
-const TYPE_LABELS: Record<string, string> = {
-  solar: 'Solar',
-  wind_onshore: 'Wind Onshore',
-  wind_offshore: 'Wind Offshore',
-  biomass: 'Biomasse',
-  hydro: 'Wasserkraft',
-  hydro_pumped: 'Pumpspeicher',
-  gas: 'Erdgas',
-  hard_coal: 'Steinkohle',
-  lignite: 'Braunkohle',
-  nuclear: 'Kernenergie',
-  oil: 'Öl',
-  other: 'Sonstige',
-};
+const TYPE_LABELS = ENERGY_TYPE_LABELS;
 
 // ─── Tooltip Style ──────────────────────────────────────────────────────
 
@@ -157,7 +145,7 @@ function CapacityBarChartInner({ data, width, height }: InnerProps) {
           })}
           <AxisLeft
             scale={yScale}
-            tickFormat={(v) => TYPE_LABELS[v] ?? v}
+            tickFormat={(v) => (ENERGY_TYPE_LABELS[(v as any) as EnergyType] || v)}
             tickLabelProps={{
               fill: '#666',
               fontSize: 12,
@@ -189,7 +177,7 @@ function CapacityBarChartInner({ data, width, height }: InnerProps) {
           style={tooltipStyles}
         >
           <div style={{ fontWeight: 600 }}>
-            {TYPE_LABELS[tooltipData.type] ?? tooltipData.type}
+            {ENERGY_TYPE_LABELS[(tooltipData.type as any) as EnergyType] || tooltipData.type}
           </div>
           <div>
             {(tooltipData.capacity / 1000).toFixed(1)} GW

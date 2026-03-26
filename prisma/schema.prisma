@@ -66,3 +66,16 @@ model CapacityData {
 
   @@unique([date, energyType, source])
 }
+
+model LoadData {
+  id         String   @id @default(cuid())
+  timestamp  DateTime
+  value      Float    // MW
+  source     String   // 'entsoe' | 'netztransparenz'
+  
+  fetchedAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([timestamp, source])
+  @@index([timestamp])
+}

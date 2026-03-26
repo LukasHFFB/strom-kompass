@@ -4,7 +4,7 @@ import { EnergyType } from '@/types/energy';
 
 export const ENTSOE_CONFIG = {
   baseUrl: 'https://web-api.tp.entsoe.eu/api',
-  biddingZone: '10Y1001A1001A82H', // DE-LU (Germany-Luxembourg)
+  biddingZone: '10Y1001A1001A82H', // DE-LU
 
   documentTypes: {
     DAY_AHEAD_PRICES: 'A44',

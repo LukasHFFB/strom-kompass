@@ -43,6 +43,13 @@ export interface GenerationDataPoint {
   source: DataSource;
 }
 
+export interface LoadDataPoint {
+  timestamp: string; // ISO 8601
+  value: number;     // MW
+  unit: string;
+  source: DataSource;
+}
+
 export interface InstalledCapacity {
   type: EnergyType;
   capacity: number; // MW

@@ -25,8 +25,9 @@ export interface PricePoint {
 // ─── Accessors ──────────────────────────────────────────────────────────
 
 const getDate = (d: PricePoint) => new Date(d.timestamp);
-const getPrice = (d: PricePoint) => d.price;
-const bisectDate = bisector<PricePoint, Date>((d) => new Date(d.timestamp)).left;
+const getPrice = (d: any) => d.price ?? d.value ?? 0;
+const getUnit = (d: any) => d.unit ?? '';
+const bisectDate = bisector<any, Date>((d) => new Date(d.timestamp)).left;
 
 // ─── Tooltip Style ──────────────────────────────────────────────────────
 
@@ -186,7 +187,7 @@ function PriceLineChartInner({ data, width, height }: InnerChartProps) {
             }}
             stroke={COLORS.grid}
             tickStroke={COLORS.grid}
-            label="EUR/MWh"
+            label={data[0]?.unit || 'Wert'}
             labelProps={{
               fill: COLORS.axis,
               fontSize: 12,
@@ -236,7 +237,7 @@ function PriceLineChartInner({ data, width, height }: InnerChartProps) {
           style={tooltipStyles}
         >
           <div style={{ fontWeight: 600 }}>
-            {getPrice(tooltipData).toFixed(2)} EUR/MWh
+            {getPrice(tooltipData).toLocaleString('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 2 })} {getUnit(tooltipData)}
           </div>
           <div style={{ opacity: 0.7, fontSize: '11px' }}>
             {new Date(tooltipData.timestamp).toLocaleString('de-DE', {
