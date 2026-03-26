@@ -127,7 +127,7 @@ function GenerationStackedAreaInner({ data, width, height }: InnerProps) {
     }
     return scaleLinear({
       range: [innerHeight, 0],
-      domain: [0, maxTotal * 1.05],
+      domain: [0, Math.max(maxTotal * 1.05, 1)],
       nice: true,
     });
   }, [rows, keys, innerHeight]);

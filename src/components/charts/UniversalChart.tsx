@@ -1,41 +1,78 @@
 'use client';
 
-import PriceLineChart from './PriceLineChart';
+import PriceLineChart, { PricePoint } from './PriceLineChart';
 import GenerationStackedArea from './GenerationStackedArea';
 import CapacityBarChart from './CapacityBarChart';
 
+// ─── Chart Compatibility ─────────────────────────────────────────────────
+// Maps source category → valid chart types (first entry = default for that source)
+
+export type ChartType = 'line' | 'area' | 'bar';
+
+export const CHART_COMPAT: Record<string, ChartType[]> = {
+  prices:     ['line', 'area'],
+  generation: ['area'],
+  load:       ['line', 'area'],
+  capacity:   ['bar'],
+  ntp:        ['line', 'area'],
+};
+
+/** Map a sourceId to its CHART_COMPAT category key */
+export function getSourceCategory(sourceId: string): string {
+  if (sourceId.startsWith('ntp_')) return 'ntp';
+  return sourceId;
+}
+
+// ─── Data Normalization ──────────────────────────────────────────────────
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+/**
+ * Normalize any time-series data shape to PricePoint for line/area charts.
+ * Handles: PriceDataPoint (.price), LoadDataPoint (.value),
+ *          NTP generic (.value), ForecastDataPoint (.forecast).
+ */
+function normalizeToPricePoints(data: any[]): PricePoint[] {
+  return data
+    .map((d) => ({
+      timestamp: String(d.timestamp ?? ''),
+      price: Number(d.price ?? d.value ?? d.forecast ?? 0),
+      unit: String(d.unit ?? ''),
+      source: String(d.source ?? ''),
+    }))
+    .filter((d) => d.timestamp !== '' && !isNaN(d.price));
+}
+
+// ─── Component ───────────────────────────────────────────────────────────
+
 interface UniversalChartProps {
-  type: 'line' | 'bar' | 'pie' | 'area';
+  type: ChartType;
   data: any[];
   height?: number;
   sourceId: string;
 }
 
-export default function UniversalChart({ type, data, height = 400, sourceId }: UniversalChartProps) {
-  // Logic to route to the best fitting specialized chart or a generic one
-  
-  if (sourceId === 'generation' && type === 'area') {
+export default function UniversalChart({
+  type,
+  data,
+  height = 400,
+  sourceId,
+}: UniversalChartProps) {
+  const category = getSourceCategory(sourceId);
+  const validTypes = CHART_COMPAT[category] ?? CHART_COMPAT.ntp;
+
+  // If requested type is not valid for this source, fall back to the source's default
+  const effectiveType: ChartType = validTypes.includes(type) ? type : validTypes[0];
+  void effectiveType; // reserved for future line vs area visual distinction
+
+  if (category === 'generation') {
     return <GenerationStackedArea data={data} height={height} />;
   }
-  
-  if (sourceId === 'capacity' && type === 'bar') {
+
+  if (category === 'capacity') {
     return <CapacityBarChart data={data} height={height} />;
   }
 
-  if (type === 'line' || type === 'area') {
-    // We can reuse PriceLineChart for most line/area needs if we normalize data
-    // For now, let's keep it simple
-    return <PriceLineChart data={data} height={height} />;
-  }
-
-  if (type === 'bar') {
-    // Fallback to Capacity-style bars
-    return <CapacityBarChart data={data} height={height} />;
-  }
-
-  return (
-    <div style={{ height, display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #eee', borderRadius: '8px' }}>
-      <p>Visualisierung für {type} / {sourceId} in Vorbereitung.</p>
-    </div>
-  );
+  // prices, load, and all NTP sources: normalize to time-value and render
+  return <PriceLineChart data={normalizeToPricePoints(data)} height={height} />;
 }
+/* eslint-enable @typescript-eslint/no-explicit-any */
