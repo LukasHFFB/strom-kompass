@@ -8,7 +8,8 @@ import { AxisBottom, AxisLeft } from '@visx/axis';
 import { GridColumns } from '@visx/grid';
 import { useTooltip, TooltipWithBounds, defaultStyles } from '@visx/tooltip';
 import { ParentSize } from '@visx/responsive';
-import { ENERGY_TYPE_LABELS } from '@/lib/utils/translations';
+import { translateEnergyType } from '@/lib/utils/translations';
+import { EnergyType } from '@/types/energy';
 
 // ─── Types ──────────────────────────────────────────────────────────────
 
@@ -37,7 +38,6 @@ const TYPE_COLORS: Record<string, string> = {
   other: '#9ca3af',
 };
 
-const TYPE_LABELS = ENERGY_TYPE_LABELS;
 
 // ─── Tooltip Style ──────────────────────────────────────────────────────
 
@@ -145,7 +145,7 @@ function CapacityBarChartInner({ data, width, height }: InnerProps) {
           })}
           <AxisLeft
             scale={yScale}
-            tickFormat={(v) => (ENERGY_TYPE_LABELS[(v as any) as EnergyType] || v)}
+            tickFormat={(v) => translateEnergyType(v as string)}
             tickLabelProps={{
               fill: '#666',
               fontSize: 12,
@@ -177,7 +177,7 @@ function CapacityBarChartInner({ data, width, height }: InnerProps) {
           style={tooltipStyles}
         >
           <div style={{ fontWeight: 600 }}>
-            {ENERGY_TYPE_LABELS[(tooltipData.type as any) as EnergyType] || tooltipData.type}
+            {translateEnergyType(tooltipData.type)}
           </div>
           <div>
             {(tooltipData.capacity / 1000).toFixed(1)} GW
@@ -217,4 +217,4 @@ export default function CapacityBarChart({ data, height }: CapacityBarChartProps
   );
 }
 
-export { TYPE_COLORS, TYPE_LABELS };
+export { TYPE_COLORS };
