@@ -149,22 +149,30 @@ export function parseGenericNtp(csv: string): any[] {
 
     const timestamp = buildTimestamp(datum, von);
     
-    // Find first numeric value that isn't 'von' or 'bis' or 'Datum'
+    // Sum all numeric value columns, skip metadata fields.
+    // For multi-TSO data (e.g. 50Hertz/Amprion/TenneT/TransnetBW columns)
+    // this produces the Germany-wide total, consistent with other parsers.
     let value = 0;
     let unit = 'N/A';
-    
+    let hasValue = false;
+
+    const SKIP_KEYS = new Set(['Datum', 'von', 'bis', 'Zeitzone von', 'Zeitzone bis', 'Monat', 'Date']);
+
     for (const [key, val] of Object.entries(row)) {
-      if (['Datum', 'von', 'bis', 'Zeitzone von', 'Zeitzone bis', 'Monat', 'Date'].includes(key)) continue;
-      
+      if (SKIP_KEYS.has(key)) continue;
       const num = parseGermanNumber(val);
       if (!isNaN(num)) {
-        value = num;
-        // Try to extract unit from header (e.g., "Solar (MW)" -> "MW")
-        const unitMatch = key.match(/\(([^)]+)\)/);
-        if (unitMatch) unit = unitMatch[1];
-        break; 
+        value += num;
+        hasValue = true;
+        // Extract unit from first matching header, e.g. "Solar (MW)" → "MW"
+        if (unit === 'N/A') {
+          const unitMatch = key.match(/\(([^)]+)\)/);
+          if (unitMatch) unit = unitMatch[1];
+        }
       }
     }
+
+    if (!hasValue) continue;
 
     result.push({
       timestamp,
@@ -193,6 +201,7 @@ function mapTechnologyToEnergyType(tech: string): EnergyType {
 }
 
 function parseGermanNumber(str: string): number {
+  if (!str || typeof str !== 'string') return NaN;
   // German format: 1.234,56 → 1234.56
   // Also handle simple format: 12.038
   if (str.includes(',')) {

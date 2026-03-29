@@ -65,9 +65,10 @@ interface InnerChartProps {
   data: PricePoint[];
   width: number;
   height: number;
+  filled: boolean;
 }
 
-function PriceLineChartInner({ data, width, height }: InnerChartProps) {
+function PriceLineChartInner({ data, width, height, filled }: InnerChartProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const {
     showTooltip,
@@ -80,22 +81,20 @@ function PriceLineChartInner({ data, width, height }: InnerChartProps) {
   const innerWidth = width - margin.left - margin.right;
   const innerHeight = height - margin.top - margin.bottom;
 
-  const xScale = useMemo(
-    () =>
-      scaleTime({
-        range: [0, innerWidth],
-        domain: [
-          Math.min(...data.map((d) => getDate(d).getTime())),
-          Math.max(...data.map((d) => getDate(d).getTime())),
-        ],
-      }),
-    [data, innerWidth]
-  );
+  const xScale = useMemo(() => {
+    const times = data.map((d) => getDate(d).getTime());
+    return scaleTime({
+      range: [0, innerWidth],
+      domain: times.length > 0
+        ? [Math.min(...times), Math.max(...times)]
+        : [new Date(), new Date()],
+    });
+  }, [data, innerWidth]);
 
   const yScale = useMemo(() => {
     const prices = data.map(getPrice);
-    const minP = Math.min(...prices);
-    const maxP = Math.max(...prices);
+    const minP = prices.length > 0 ? Math.min(...prices) : 0;
+    const maxP = prices.length > 0 ? Math.max(...prices) : 1;
     const padding = (maxP - minP) * 0.1 || 5;
     return scaleLinear({
       range: [innerHeight, 0],
@@ -146,14 +145,16 @@ function PriceLineChartInner({ data, width, height }: InnerChartProps) {
             stroke={COLORS.grid}
             strokeOpacity={0.8}
           />
-          <AreaClosed
-            data={data}
-            x={(d) => xScale(getDate(d)) ?? 0}
-            y={(d) => yScale(getPrice(d)) ?? 0}
-            yScale={yScale}
-            curve={curveMonotoneX}
-            fill="url(#price-gradient)"
-          />
+          {filled && (
+            <AreaClosed
+              data={data}
+              x={(d) => xScale(getDate(d)) ?? 0}
+              y={(d) => yScale(getPrice(d)) ?? 0}
+              yScale={yScale}
+              curve={curveMonotoneX}
+              fill="url(#price-gradient)"
+            />
+          )}
           <LinePath
             data={data}
             x={(d) => xScale(getDate(d)) ?? 0}
@@ -259,9 +260,10 @@ function PriceLineChartInner({ data, width, height }: InnerChartProps) {
 interface PriceLineChartProps {
   data: PricePoint[];
   height?: number;
+  filled?: boolean;
 }
 
-export default function PriceLineChart({ data, height = 350 }: PriceLineChartProps) {
+export default function PriceLineChart({ data, height = 350, filled = true }: PriceLineChartProps) {
   if (data.length === 0) {
     return (
       <div style={{ height, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#888' }}>
@@ -274,7 +276,7 @@ export default function PriceLineChart({ data, height = 350 }: PriceLineChartPro
     <ParentSize>
       {({ width }) =>
         width > 0 ? (
-          <PriceLineChartInner data={data} width={width} height={height} />
+          <PriceLineChartInner data={data} width={width} height={height} filled={filled} />
         ) : null
       }
     </ParentSize>

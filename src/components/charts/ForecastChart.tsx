@@ -87,23 +87,22 @@ function ForecastChartInner({ data, width, height, type }: InnerProps) {
 
   const color = COLORS[type] || COLORS.default;
 
-  const xScale = useMemo(
-    () =>
-      scaleTime({
-        range: [0, innerWidth],
-        domain: [
-          Math.min(...data.map((d) => getDate(d).getTime())),
-          Math.max(...data.map((d) => getDate(d).getTime())),
-        ],
-      }),
-    [data, innerWidth]
-  );
+  const xScale = useMemo(() => {
+    const times = data.map((d) => getDate(d).getTime());
+    return scaleTime({
+      range: [0, innerWidth],
+      domain: times.length > 0
+        ? [Math.min(...times), Math.max(...times)]
+        : [new Date(), new Date()],
+    });
+  }, [data, innerWidth]);
 
   const yScale = useMemo(() => {
     const vals = data.map(getForecast);
+    const maxVal = vals.length > 0 ? Math.max(...vals) : 0;
     return scaleLinear({
       range: [innerHeight, 0],
-      domain: [0, Math.max(...vals) * 1.1],
+      domain: [0, Math.max(maxVal * 1.1, 1)],
       nice: true,
     });
   }, [data, innerHeight]);
