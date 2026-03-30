@@ -1,5 +1,4 @@
 import { ChartType, DatasetConfig } from './types';
-import { getSourceById } from './sources';
 
 export interface ChartTypeOption {
   id: ChartType;
@@ -10,12 +9,27 @@ export interface ChartTypeOption {
 export const CHART_TYPE_OPTIONS: ChartTypeOption[] = [
   { id: 'line', label: 'Linie', description: 'Zeitverläufe vergleichen' },
   { id: 'area', label: 'Fläche', description: 'Gefüllte Zeitverläufe' },
+  { id: 'bar', label: 'Balken', description: 'Werte als Balken' },
+  { id: 'scatter', label: 'Streudiagramm', description: 'Korrelation (2 Datensätze)' },
+  { id: 'heatmap', label: 'Heatmap', description: 'Muster nach Stunde & Tag' },
 ];
 
+/**
+ * Return which chart types are available given the current dataset selection.
+ */
 export function getCompatibleChartTypes(datasets: DatasetConfig[]): ChartType[] {
-  if (datasets.length === 0) return ['line', 'area'];
-  // All current sources are timeseries, so both line and area always work
-  return ['line', 'area'];
+  const n = datasets.length;
+  if (n === 0) return ['line', 'area', 'bar', 'scatter', 'heatmap'];
+
+  const types: ChartType[] = ['line', 'area', 'bar'];
+
+  // Scatter requires exactly 2 datasets
+  if (n === 2) types.push('scatter');
+
+  // Heatmap requires exactly 1 dataset
+  if (n === 1) types.push('heatmap');
+
+  return types;
 }
 
 export function isChartTypeCompatible(chartType: ChartType, datasets: DatasetConfig[]): boolean {

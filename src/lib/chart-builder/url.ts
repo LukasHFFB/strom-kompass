@@ -1,4 +1,8 @@
-import { ChartBuilderState, DatasetConfig, ChartType } from './types';
+import { ChartBuilderState, ChartType, AggPeriod, AggMethod } from './types';
+
+const VALID_CHART_TYPES = new Set(['line', 'area', 'bar', 'scatter', 'heatmap']);
+const VALID_AGG_PERIODS = new Set(['none', 'hourly', 'daily', 'weekly', 'monthly']);
+const VALID_AGG_METHODS = new Set(['avg', 'sum', 'max', 'min']);
 
 export function serializeState(state: ChartBuilderState): string {
   const params = new URLSearchParams();
@@ -14,9 +18,9 @@ export function serializeState(state: ChartBuilderState): string {
   params.set('from', state.from);
   params.set('to', state.to);
 
-  if (state.title) {
-    params.set('title', state.title);
-  }
+  if (state.title) params.set('title', state.title);
+  if (state.aggPeriod && state.aggPeriod !== 'none') params.set('agg', state.aggPeriod);
+  if (state.aggMethod && state.aggMethod !== 'avg') params.set('aggm', state.aggMethod);
 
   return params.toString();
 }
@@ -38,7 +42,7 @@ export function deserializeState(search: string): Partial<ChartBuilderState> {
   }
 
   const t = params.get('t');
-  if (t === 'line' || t === 'area') state.chartType = t as ChartType;
+  if (t && VALID_CHART_TYPES.has(t)) state.chartType = t as ChartType;
 
   const from = params.get('from');
   if (from) state.from = from;
@@ -48,6 +52,12 @@ export function deserializeState(search: string): Partial<ChartBuilderState> {
 
   const title = params.get('title');
   if (title) state.title = title;
+
+  const agg = params.get('agg');
+  if (agg && VALID_AGG_PERIODS.has(agg)) state.aggPeriod = agg as AggPeriod;
+
+  const aggm = params.get('aggm');
+  if (aggm && VALID_AGG_METHODS.has(aggm)) state.aggMethod = aggm as AggMethod;
 
   return state;
 }

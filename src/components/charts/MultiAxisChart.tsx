@@ -37,7 +37,7 @@ interface TooltipData {
 
 interface Props {
   datasets: ChartDataset[];
-  chartType: 'line' | 'area';
+  chartType: 'line' | 'area' | 'bar';
   height?: number;
 }
 
@@ -169,28 +169,57 @@ function MultiAxisChartInner({
           />
 
           {/* Render each dataset */}
-          {datasets.map(ds => {
+          {datasets.map((ds, dsIdx) => {
             const yScale = yScaleFor(ds);
+            const barWidth = chartType === 'bar'
+              ? Math.max(1, (innerWidth / (ds.data.length || 1) / datasets.length) - 1)
+              : 0;
+            const barOffset = chartType === 'bar' ? dsIdx * barWidth : 0;
+
             return (
               <g key={ds.id}>
-                {chartType === 'area' && (
-                  <AreaClosed
-                    data={ds.data}
-                    x={d => xScale(new Date(d.timestamp)) ?? 0}
-                    y={d => yScale(d.value) ?? 0}
-                    yScale={yScale}
-                    curve={curveMonotoneX}
-                    fill={`url(#gradient-${ds.id})`}
-                  />
+                {chartType === 'bar' ? (
+                  ds.data.map((d, i) => {
+                    const x = (xScale(new Date(d.timestamp)) ?? 0) + barOffset;
+                    const yVal = yScale(d.value) ?? 0;
+                    const yZero = yScale(0) ?? innerHeight;
+                    const barHeight = Math.abs(yZero - yVal);
+                    const barY = d.value >= 0 ? yVal : yZero;
+                    return (
+                      <rect
+                        key={i}
+                        x={x - barWidth / 2}
+                        y={barY}
+                        width={barWidth}
+                        height={barHeight}
+                        fill={ds.color}
+                        fillOpacity={0.7}
+                        rx={1}
+                      />
+                    );
+                  })
+                ) : (
+                  <>
+                    {chartType === 'area' && (
+                      <AreaClosed
+                        data={ds.data}
+                        x={d => xScale(new Date(d.timestamp)) ?? 0}
+                        y={d => yScale(d.value) ?? 0}
+                        yScale={yScale}
+                        curve={curveMonotoneX}
+                        fill={`url(#gradient-${ds.id})`}
+                      />
+                    )}
+                    <LinePath
+                      data={ds.data}
+                      x={d => xScale(new Date(d.timestamp)) ?? 0}
+                      y={d => yScale(d.value) ?? 0}
+                      curve={curveMonotoneX}
+                      stroke={ds.color}
+                      strokeWidth={2}
+                    />
+                  </>
                 )}
-                <LinePath
-                  data={ds.data}
-                  x={d => xScale(new Date(d.timestamp)) ?? 0}
-                  y={d => yScale(d.value) ?? 0}
-                  curve={curveMonotoneX}
-                  stroke={ds.color}
-                  strokeWidth={2}
-                />
               </g>
             );
           })}

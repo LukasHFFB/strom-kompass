@@ -2,21 +2,28 @@
 
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import MultiAxisChart from '@/components/charts/MultiAxisChart';
+import HeatmapChart from '@/components/charts/HeatmapChart';
+import ScatterChart from '@/components/charts/ScatterChart';
 import {
-  ALL_SOURCES,
   getSourceById,
   getSourcesByCategory,
   CATEGORY_LABELS,
   CATEGORY_ORDER,
 } from '@/lib/chart-builder/sources';
-import { CHART_TYPE_OPTIONS } from '@/lib/chart-builder/compatibility';
+import {
+  CHART_TYPE_OPTIONS,
+  getCompatibleChartTypes,
+} from '@/lib/chart-builder/compatibility';
 import { serializeState, deserializeState, getShareUrl } from '@/lib/chart-builder/url';
+import { aggregateData, AGG_PERIOD_OPTIONS, AGG_METHOD_OPTIONS } from '@/lib/chart-builder/aggregation';
 import type {
   DatasetConfig,
   ChartType,
   ChartDataset,
   NormalizedDataPoint,
   DataSourceDef,
+  AggPeriod,
+  AggMethod,
 } from '@/lib/chart-builder/types';
 import { PALETTE } from '@/lib/chart-builder/types';
 
@@ -28,6 +35,7 @@ const TIMEFRAME_PRESETS = [
   { label: '7 Tage', days: 7 },
   { label: '30 Tage', days: 30 },
   { label: '90 Tage', days: 90 },
+  { label: '1 Jahr', days: 365 },
 ];
 
 function daysAgo(n: number): string {
@@ -47,7 +55,6 @@ function normalizeData(sourceId: string, rawData: any[]): NormalizedDataPoint[] 
   if (!source) return [];
 
   if (source.energyType) {
-    // Filter generation data by energy type
     return rawData
       .filter((d: any) => d.type === source.energyType)
       .map((d: any) => ({ timestamp: d.timestamp, value: Number(d.value) || 0 }))
@@ -59,21 +66,17 @@ function normalizeData(sourceId: string, rawData: any[]): NormalizedDataPoint[] 
       timestamp: d.timestamp,
       value: Number(d[source.valueKey] ?? d.value ?? d.price ?? 0),
     }))
-    .filter((d: NormalizedDataPoint) => d.timestamp)
+    .filter((d: NormalizedDataPoint) => d.timestamp && !isNaN(new Date(d.timestamp).getTime()))
     .sort((a: NormalizedDataPoint, b: NormalizedDataPoint) => a.timestamp.localeCompare(b.timestamp));
 }
 
 // ---- Default axis assignment ----
 
-function getDefaultAxis(
-  sourceId: string,
-  existing: DatasetConfig[],
-): 'left' | 'right' {
+function getDefaultAxis(sourceId: string, existing: DatasetConfig[]): 'left' | 'right' {
   if (existing.length === 0) return 'left';
   const newSource = getSourceById(sourceId);
   const firstSource = getSourceById(existing[0].sourceId);
   if (!newSource || !firstSource) return 'left';
-  // Same unit → same axis; different unit → opposite axis
   if (newSource.unit === firstSource.unit) return 'left';
   return 'right';
 }
@@ -87,6 +90,8 @@ export default function AnalysePage() {
   const [from, setFrom] = useState(() => daysAgo(4));
   const [to, setTo] = useState(() => daysAgo(1));
   const [title, setTitle] = useState('');
+  const [aggPeriod, setAggPeriod] = useState<AggPeriod>('none');
+  const [aggMethod, setAggMethod] = useState<AggMethod>('avg');
 
   // UI state
   const [searchTerm, setSearchTerm] = useState('');
@@ -108,6 +113,8 @@ export default function AnalysePage() {
     if (restored.from) setFrom(restored.from);
     if (restored.to) setTo(restored.to);
     if (restored.title) setTitle(restored.title);
+    if (restored.aggPeriod) setAggPeriod(restored.aggPeriod);
+    if (restored.aggMethod) setAggMethod(restored.aggMethod);
     initialized.current = true;
   }, []);
 
@@ -115,9 +122,19 @@ export default function AnalysePage() {
 
   useEffect(() => {
     if (!initialized.current) return;
-    const query = serializeState({ datasets, chartType, from, to, title });
+    const query = serializeState({ datasets, chartType, from, to, title, aggPeriod, aggMethod });
     window.history.replaceState(null, '', `?${query}`);
-  }, [datasets, chartType, from, to, title]);
+  }, [datasets, chartType, from, to, title, aggPeriod, aggMethod]);
+
+  // ---- Auto-adjust chart type when incompatible with dataset count ----
+
+  useEffect(() => {
+    if (!initialized.current) return;
+    const compatible = getCompatibleChartTypes(datasets);
+    if (!compatible.includes(chartType)) {
+      setChartType(compatible[0] || 'line');
+    }
+  }, [datasets, chartType]);
 
   // ---- Fetch data when datasets or timeframe change ----
 
@@ -137,12 +154,11 @@ export default function AnalysePage() {
       try {
         const results: Record<string, any[]> = {};
 
-        // Group sources by API path to deduplicate requests
+        // Group by API path to deduplicate
         const byPath = new Map<string, string[]>();
         for (const ds of datasets) {
           const source = getSourceById(ds.sourceId);
           if (!source) continue;
-          const basePath = source.path.split('?')[0]; // strip query params for grouping
           if (!byPath.has(source.path)) byPath.set(source.path, []);
           byPath.get(source.path)!.push(ds.sourceId);
         }
@@ -152,10 +168,7 @@ export default function AnalysePage() {
           const params = new URLSearchParams();
           params.set('from', from);
           params.set('to', to);
-
-          if (source.endpointKey) {
-            params.set('endpoint', source.endpointKey);
-          }
+          if (source.endpointKey) params.set('endpoint', source.endpointKey);
 
           const sep = path.includes('?') ? '&' : '?';
           const res = await fetch(`${path}${sep}${params.toString()}`);
@@ -164,7 +177,6 @@ export default function AnalysePage() {
           if (json.error) throw new Error(`${source.label}: ${json.error}`);
           if (!json.data) return;
 
-          // Store raw data for all sources using this path
           for (const sid of sourceIds) {
             results[sid] = json.data;
           }
@@ -183,7 +195,7 @@ export default function AnalysePage() {
     return () => { cancelled = true; };
   }, [datasets, from, to]);
 
-  // ---- Normalize fetched data into chart datasets ----
+  // ---- Normalize + aggregate fetched data into chart datasets ----
 
   const chartDatasets: ChartDataset[] = useMemo(() => {
     return datasets
@@ -192,10 +204,12 @@ export default function AnalysePage() {
         if (!source) return null;
         const raw = fetchedRaw[ds.sourceId];
         if (!raw) return null;
-        const data = normalizeData(ds.sourceId, raw);
+        let data = normalizeData(ds.sourceId, raw);
         if (data.length === 0) return null;
 
-        // Try to extract unit from actual data if source unit is empty
+        // Apply aggregation
+        data = aggregateData(data, aggPeriod, aggMethod);
+
         let unit = source.unit;
         if (!unit && raw[0]?.unit) unit = raw[0].unit;
 
@@ -209,21 +223,18 @@ export default function AnalysePage() {
         };
       })
       .filter((d): d is ChartDataset => d !== null);
-  }, [datasets, fetchedRaw]);
+  }, [datasets, fetchedRaw, aggPeriod, aggMethod]);
 
   // ---- Dataset actions ----
 
-  const addDataset = useCallback(
-    (sourceId: string) => {
-      setDatasets(prev => {
-        if (prev.some(d => d.sourceId === sourceId)) return prev;
-        const color = PALETTE[prev.length % PALETTE.length];
-        const yAxis = getDefaultAxis(sourceId, prev);
-        return [...prev, { sourceId, color, yAxis }];
-      });
-    },
-    [],
-  );
+  const addDataset = useCallback((sourceId: string) => {
+    setDatasets(prev => {
+      if (prev.some(d => d.sourceId === sourceId)) return prev;
+      const color = PALETTE[prev.length % PALETTE.length];
+      const yAxis = getDefaultAxis(sourceId, prev);
+      return [...prev, { sourceId, color, yAxis }];
+    });
+  }, []);
 
   const removeDataset = useCallback((sourceId: string) => {
     setDatasets(prev => prev.filter(d => d.sourceId !== sourceId));
@@ -232,25 +243,18 @@ export default function AnalysePage() {
   const toggleAxis = useCallback((sourceId: string) => {
     setDatasets(prev =>
       prev.map(d =>
-        d.sourceId === sourceId
-          ? { ...d, yAxis: d.yAxis === 'left' ? 'right' : 'left' }
-          : d,
+        d.sourceId === sourceId ? { ...d, yAxis: d.yAxis === 'left' ? 'right' : 'left' } : d,
       ),
     );
   }, []);
 
   const toggleSource = useCallback(
     (sourceId: string) => {
-      if (datasets.some(d => d.sourceId === sourceId)) {
-        removeDataset(sourceId);
-      } else {
-        addDataset(sourceId);
-      }
+      if (datasets.some(d => d.sourceId === sourceId)) removeDataset(sourceId);
+      else addDataset(sourceId);
     },
     [datasets, addDataset, removeDataset],
   );
-
-  // ---- Category toggle ----
 
   const toggleCategory = useCallback((cat: string) => {
     setExpandedCategories(prev => {
@@ -261,29 +265,20 @@ export default function AnalysePage() {
     });
   }, []);
 
-  // ---- Timeframe presets ----
-
   const applyPreset = useCallback((days: number) => {
-    if (days === 0) {
-      setFrom(today());
-      setTo(today());
-    } else {
-      setFrom(daysAgo(days));
-      setTo(daysAgo(1));
-    }
+    if (days === 0) { setFrom(today()); setTo(today()); }
+    else { setFrom(daysAgo(days)); setTo(daysAgo(1)); }
   }, []);
 
-  // ---- Share ----
-
   const handleShare = useCallback(() => {
-    const url = getShareUrl({ datasets, chartType, from, to, title });
+    const url = getShareUrl({ datasets, chartType, from, to, title, aggPeriod, aggMethod });
     navigator.clipboard.writeText(url).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     });
-  }, [datasets, chartType, from, to, title]);
+  }, [datasets, chartType, from, to, title, aggPeriod, aggMethod]);
 
-  // ---- Filtered source list ----
+  // ---- Derived data ----
 
   const sourcesByCategory = useMemo(() => getSourcesByCategory(), []);
 
@@ -298,12 +293,49 @@ export default function AnalysePage() {
     return filtered;
   }, [sourcesByCategory, searchTerm]);
 
-  // ---- Total data points ----
+  const compatibleTypes = useMemo(() => getCompatibleChartTypes(datasets), [datasets]);
 
   const totalPoints = useMemo(
     () => chartDatasets.reduce((sum, ds) => sum + ds.data.length, 0),
     [chartDatasets],
   );
+
+  // ---- Chart rendering ----
+
+  function renderChart() {
+    if (datasets.length === 0) {
+      return (
+        <div className="empty-state">
+          Wähle links Datenquellen aus, um ein Diagramm zu erstellen.
+        </div>
+      );
+    }
+
+    if (loading && chartDatasets.length === 0) {
+      return <div className="loading-shimmer" style={{ height: '450px', borderRadius: '8px' }} />;
+    }
+
+    if (chartType === 'heatmap') {
+      const ds = chartDatasets[0];
+      if (!ds) return <div className="empty-state">Keine Daten verfügbar.</div>;
+      const heatData = ds.data.map(d => ({ timestamp: d.timestamp, value: d.value, unit: ds.unit }));
+      return <HeatmapChart data={heatData} unit={ds.unit} height={500} />;
+    }
+
+    if (chartType === 'scatter') {
+      if (chartDatasets.length < 2) return <div className="empty-state">Wähle genau 2 Datensätze für ein Streudiagramm.</div>;
+      return <ScatterChart datasetX={chartDatasets[0]} datasetY={chartDatasets[1]} height={450} />;
+    }
+
+    // line, area, bar
+    return (
+      <MultiAxisChart
+        datasets={chartDatasets}
+        chartType={chartType as 'line' | 'area' | 'bar'}
+        height={450}
+      />
+    );
+  }
 
   // ---- Render ----
 
@@ -327,7 +359,6 @@ export default function AnalysePage() {
               <span className="step-count">{datasets.length} gewählt</span>
             </div>
 
-            {/* Selected dataset chips */}
             {datasets.length > 0 && (
               <div className="selected-chips">
                 {datasets.map(ds => {
@@ -352,7 +383,6 @@ export default function AnalysePage() {
               </div>
             )}
 
-            {/* Search */}
             <input
               type="text"
               placeholder="Suchen..."
@@ -362,7 +392,6 @@ export default function AnalysePage() {
               style={{ marginBottom: '0.5rem' }}
             />
 
-            {/* Categorized source list */}
             <div className="source-list">
               {CATEGORY_ORDER.filter(cat => filteredByCategory.has(cat)).map(cat => {
                 const sources = filteredByCategory.get(cat)!;
@@ -381,21 +410,10 @@ export default function AnalysePage() {
                           const ds = datasets.find(d => d.sourceId === s.id);
                           return (
                             <label key={s.id} className="source-item">
-                              <input
-                                type="checkbox"
-                                checked={isSelected}
-                                onChange={() => toggleSource(s.id)}
-                              />
-                              {ds && (
-                                <span
-                                  className="chip-color"
-                                  style={{ background: ds.color }}
-                                />
-                              )}
+                              <input type="checkbox" checked={isSelected} onChange={() => toggleSource(s.id)} />
+                              {ds && <span className="chip-color" style={{ background: ds.color }} />}
                               <span className="source-label">{s.label}</span>
-                              {s.unit && (
-                                <span className="source-unit">{s.unit}</span>
-                              )}
+                              {s.unit && <span className="source-unit">{s.unit}</span>}
                             </label>
                           );
                         })}
@@ -414,19 +432,29 @@ export default function AnalysePage() {
               <span className="step-title">Diagrammtyp</span>
             </div>
             <div className="chart-type-grid">
-              {CHART_TYPE_OPTIONS.map(opt => (
-                <button
-                  key={opt.id}
-                  className={`chart-type-btn ${chartType === opt.id ? 'active' : ''}`}
-                  onClick={() => setChartType(opt.id)}
-                >
-                  <div style={{ fontWeight: 600 }}>{opt.label}</div>
-                  <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
-                    {opt.description}
-                  </div>
-                </button>
-              ))}
+              {CHART_TYPE_OPTIONS.map(opt => {
+                const isCompat = compatibleTypes.includes(opt.id);
+                return (
+                  <button
+                    key={opt.id}
+                    className={`chart-type-btn ${chartType === opt.id ? 'active' : ''} ${!isCompat ? 'disabled' : ''}`}
+                    onClick={() => isCompat && setChartType(opt.id)}
+                    disabled={!isCompat}
+                  >
+                    <div style={{ fontWeight: 600 }}>{opt.label}</div>
+                    <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                      {opt.description}
+                    </div>
+                  </button>
+                );
+              })}
             </div>
+            {!compatibleTypes.includes(chartType) && datasets.length > 0 && (
+              <div style={{ fontSize: '0.7rem', color: '#b91c1c', marginTop: '0.4rem' }}>
+                {chartType === 'scatter' && 'Streudiagramm benötigt genau 2 Datensätze.'}
+                {chartType === 'heatmap' && 'Heatmap benötigt genau 1 Datensatz.'}
+              </div>
+            )}
           </div>
 
           {/* Step 3: Timeframe */}
@@ -437,11 +465,7 @@ export default function AnalysePage() {
             </div>
             <div className="preset-row">
               {TIMEFRAME_PRESETS.map(p => (
-                <button
-                  key={p.days}
-                  className="preset-btn"
-                  onClick={() => applyPreset(p.days)}
-                >
+                <button key={p.days} className="preset-btn" onClick={() => applyPreset(p.days)}>
                   {p.label}
                 </button>
               ))}
@@ -449,29 +473,55 @@ export default function AnalysePage() {
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginTop: '0.5rem' }}>
               <div>
                 <label className="input-label">Von</label>
-                <input
-                  type="date"
-                  value={from}
-                  onChange={e => setFrom(e.target.value)}
-                  className="builder-input"
-                />
+                <input type="date" value={from} onChange={e => setFrom(e.target.value)} className="builder-input" />
               </div>
               <div>
                 <label className="input-label">Bis</label>
-                <input
-                  type="date"
-                  value={to}
-                  onChange={e => setTo(e.target.value)}
-                  className="builder-input"
-                />
+                <input type="date" value={to} onChange={e => setTo(e.target.value)} className="builder-input" />
               </div>
             </div>
           </div>
 
-          {/* Step 4: Options */}
+          {/* Step 4: Aggregation */}
           <div className="builder-step">
             <div className="step-header">
               <span className="step-badge">4</span>
+              <span className="step-title">Aggregation</span>
+            </div>
+            <label className="input-label">Zeitraum</label>
+            <div className="preset-row" style={{ marginBottom: '0.5rem' }}>
+              {AGG_PERIOD_OPTIONS.map(o => (
+                <button
+                  key={o.id}
+                  className={`preset-btn ${aggPeriod === o.id ? 'preset-active' : ''}`}
+                  onClick={() => setAggPeriod(o.id)}
+                >
+                  {o.label}
+                </button>
+              ))}
+            </div>
+            {aggPeriod !== 'none' && (
+              <>
+                <label className="input-label">Methode</label>
+                <div className="preset-row">
+                  {AGG_METHOD_OPTIONS.map(o => (
+                    <button
+                      key={o.id}
+                      className={`preset-btn ${aggMethod === o.id ? 'preset-active' : ''}`}
+                      onClick={() => setAggMethod(o.id)}
+                    >
+                      {o.label}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* Step 5: Options */}
+          <div className="builder-step">
+            <div className="step-header">
+              <span className="step-badge">5</span>
               <span className="step-title">Optionen</span>
             </div>
             <label className="input-label">Titel (optional)</label>
@@ -507,6 +557,7 @@ export default function AnalysePage() {
             </h2>
             <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
               {totalPoints > 0 && `${totalPoints.toLocaleString('de-DE')} Datenpunkte`}
+              {aggPeriod !== 'none' && ` (${AGG_PERIOD_OPTIONS.find(o => o.id === aggPeriod)?.label}, ${AGG_METHOD_OPTIONS.find(o => o.id === aggMethod)?.label})`}
             </div>
           </div>
 
@@ -516,20 +567,7 @@ export default function AnalysePage() {
                 <strong>Fehler:</strong> {error}
               </div>
             )}
-
-            {datasets.length === 0 ? (
-              <div className="empty-state">
-                Wähle links Datenquellen aus, um ein Diagramm zu erstellen.
-              </div>
-            ) : loading && chartDatasets.length === 0 ? (
-              <div className="loading-shimmer" style={{ height: '400px', borderRadius: '8px' }} />
-            ) : (
-              <MultiAxisChart
-                datasets={chartDatasets}
-                chartType={chartType}
-                height={450}
-              />
-            )}
+            {renderChart()}
           </div>
         </div>
       </div>
@@ -545,7 +583,6 @@ export default function AnalysePage() {
           .builder-grid { grid-template-columns: 1fr; }
         }
 
-        /* Sidebar */
         .builder-sidebar {
           padding: 0 !important;
           max-height: 88vh;
@@ -559,7 +596,6 @@ export default function AnalysePage() {
         }
         .builder-step:last-child { border-bottom: none; }
 
-        /* Step header */
         .step-header {
           display: flex;
           align-items: center;
@@ -579,17 +615,9 @@ export default function AnalysePage() {
           font-weight: 700;
           flex-shrink: 0;
         }
-        .step-title {
-          font-weight: 600;
-          font-size: 0.85rem;
-        }
-        .step-count {
-          margin-left: auto;
-          font-size: 0.7rem;
-          color: var(--text-muted);
-        }
+        .step-title { font-weight: 600; font-size: 0.85rem; }
+        .step-count { margin-left: auto; font-size: 0.7rem; color: var(--text-muted); }
 
-        /* Selected chips */
         .selected-chips {
           display: flex;
           flex-direction: column;
@@ -605,18 +633,8 @@ export default function AnalysePage() {
           border-radius: 4px;
           font-size: 0.75rem;
         }
-        .chip-color {
-          width: 8px;
-          height: 8px;
-          border-radius: 2px;
-          flex-shrink: 0;
-        }
-        .chip-label {
-          flex: 1;
-          overflow: hidden;
-          text-overflow: ellipsis;
-          white-space: nowrap;
-        }
+        .chip-color { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; }
+        .chip-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .chip-axis {
           background: var(--primary);
           color: #fff;
@@ -638,9 +656,8 @@ export default function AnalysePage() {
           padding: 0 2px;
           flex-shrink: 0;
         }
-        .chip-remove:hover { color: var(--red); }
+        .chip-remove:hover { color: #b91c1c; }
 
-        /* Source list */
         .source-list {
           max-height: 35vh;
           overflow-y: auto;
@@ -663,14 +680,8 @@ export default function AnalysePage() {
           color: var(--text);
         }
         .category-header:hover { background: #f0f0f0; }
-        .category-count {
-          margin-left: auto;
-          color: var(--text-muted);
-          font-weight: 400;
-        }
-        .category-items {
-          border-bottom: 1px solid var(--border);
-        }
+        .category-count { margin-left: auto; color: var(--text-muted); font-weight: 400; }
+        .category-items { border-bottom: 1px solid var(--border); }
         .source-item {
           display: flex;
           align-items: center;
@@ -680,19 +691,9 @@ export default function AnalysePage() {
           font-size: 0.75rem;
         }
         .source-item:hover { background: #fafafa; }
-        .source-label {
-          flex: 1;
-          overflow: hidden;
-          text-overflow: ellipsis;
-          white-space: nowrap;
-        }
-        .source-unit {
-          color: var(--text-muted);
-          font-size: 0.65rem;
-          flex-shrink: 0;
-        }
+        .source-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .source-unit { color: var(--text-muted); font-size: 0.65rem; flex-shrink: 0; }
 
-        /* Chart type grid */
         .chart-type-grid {
           display: grid;
           grid-template-columns: 1fr 1fr;
@@ -708,19 +709,18 @@ export default function AnalysePage() {
           font-size: 0.8rem;
           transition: all 0.15s;
         }
-        .chart-type-btn:hover { border-color: var(--primary); }
+        .chart-type-btn:hover:not(.disabled) { border-color: var(--primary); }
         .chart-type-btn.active {
           border-color: var(--primary);
           background: var(--primary-light);
           color: var(--primary);
         }
-
-        /* Timeframe */
-        .preset-row {
-          display: flex;
-          gap: 0.35rem;
-          flex-wrap: wrap;
+        .chart-type-btn.disabled {
+          opacity: 0.4;
+          cursor: not-allowed;
         }
+
+        .preset-row { display: flex; gap: 0.35rem; flex-wrap: wrap; }
         .preset-btn {
           padding: 0.3rem 0.6rem;
           border-radius: 4px;
@@ -734,6 +734,12 @@ export default function AnalysePage() {
         .preset-btn:hover {
           border-color: var(--primary);
           background: var(--primary-light);
+        }
+        .preset-active {
+          border-color: var(--primary) !important;
+          background: var(--primary-light) !important;
+          color: var(--primary) !important;
+          font-weight: 600 !important;
         }
         .input-label {
           display: block;
@@ -751,7 +757,6 @@ export default function AnalysePage() {
           font-family: inherit;
         }
 
-        /* Share button */
         .share-btn {
           width: 100%;
           padding: 0.6rem;
@@ -767,7 +772,6 @@ export default function AnalysePage() {
         .share-btn:hover { opacity: 0.9; }
         .share-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
-        /* Preview */
         .builder-preview {
           min-height: 88vh;
           display: flex;
@@ -782,10 +786,7 @@ export default function AnalysePage() {
           justify-content: space-between;
           align-items: center;
         }
-        .preview-body {
-          flex: 1;
-          padding: 1.5rem;
-        }
+        .preview-body { flex: 1; padding: 1.5rem; }
         .empty-state {
           height: 100%;
           min-height: 400px;
@@ -796,6 +797,8 @@ export default function AnalysePage() {
           border: 2px dashed var(--border);
           border-radius: 12px;
           font-size: 0.9rem;
+          text-align: center;
+          padding: 2rem;
         }
         .error-box {
           background: #fff1f2;
@@ -807,11 +810,9 @@ export default function AnalysePage() {
           margin-bottom: 1rem;
         }
 
-        /* Loading */
         .loading-bar-track {
           position: absolute;
-          top: 0;
-          left: 0;
+          top: 0; left: 0;
           width: 100%;
           height: 3px;
           background: #eee;

@@ -241,5 +241,19 @@ function parseFlexibleDate(str: string): string {
   if (/^\d{4}-\d{2}-\d{2}$/.test(str)) {
     return `${str}T00:00:00.000Z`;
   }
+  // yyyy-MM (month only, e.g. from Monatsmarktwerte)
+  if (/^\d{4}-\d{2}$/.test(str)) {
+    return `${str}-01T00:00:00.000Z`;
+  }
+  // MM.yyyy (German month format)
+  const match3 = str.match(/^(\d{2})\.(\d{4})$/);
+  if (match3) {
+    const [, mm, yyyy] = match3;
+    return `${yyyy}-${mm}-01T00:00:00.000Z`;
+  }
+  // yyyy (year only, e.g. from Jahresmarktwerte)
+  if (/^\d{4}$/.test(str)) {
+    return `${str}-01-01T00:00:00.000Z`;
+  }
   return new Date(str).toISOString();
 }

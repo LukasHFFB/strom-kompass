@@ -1,6 +1,6 @@
 // ---- Chart Builder Type System ----
 
-export type ChartType = 'line' | 'area';
+export type ChartType = 'line' | 'area' | 'bar' | 'scatter' | 'heatmap';
 
 export type DataCategory =
   | 'prices'
@@ -31,12 +31,17 @@ export interface DatasetConfig {
   yAxis: 'left' | 'right';
 }
 
+export type AggPeriod = 'none' | 'hourly' | 'daily' | 'weekly' | 'monthly';
+export type AggMethod = 'avg' | 'sum' | 'max' | 'min';
+
 export interface ChartBuilderState {
   datasets: DatasetConfig[];
   chartType: ChartType;
   from: string;
   to: string;
   title: string;
+  aggPeriod: AggPeriod;
+  aggMethod: AggMethod;
 }
 
 export interface NormalizedDataPoint {
