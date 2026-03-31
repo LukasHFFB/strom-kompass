@@ -1,20 +1,5 @@
-import { NTP_CONFIG, buildNtpUrl, NTP_DATE_FORMATS, type NtpDateFormat } from '@/config/api';
+import { NTP_CONFIG, buildNtpUrl } from '@/config/api';
 import { getAccessToken } from './auth';
-
-/**
- * Format a Date for Netztransparenz API.
- * - 'day'   → yyyy-MM-dd  (default)
- * - 'month' → yyyy-MM
- * - 'year'  → yyyy
- */
-function formatDate(date: Date, format: NtpDateFormat = 'day'): string {
-  const yyyy = date.getFullYear();
-  if (format === 'year') return String(yyyy);
-  const mm = String(date.getMonth() + 1).padStart(2, '0');
-  if (format === 'month') return `${yyyy}-${mm}`;
-  const dd = String(date.getDate()).padStart(2, '0');
-  return `${yyyy}-${mm}-${dd}`;
-}
 
 /**
  * Generic fetch for any Netztransparenz endpoint.
@@ -25,9 +10,8 @@ export async function fetchNtpEndpoint(
   from: Date,
   to: Date
 ): Promise<string> {
-  const dateFormat = NTP_DATE_FORMATS[endpoint.data] || 'day';
   const token = await getAccessToken();
-  const url = buildNtpUrl(endpoint, formatDate(from, dateFormat), formatDate(to, dateFormat));
+  const url = buildNtpUrl(endpoint, from, to);
 
   console.log(`[NTP] Fetching: ${url}`);
 

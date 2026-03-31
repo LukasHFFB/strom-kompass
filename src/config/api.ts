@@ -133,28 +133,54 @@ export const NTP_CONFIG = {
   },
 } as const;
 
-// ─── Date format overrides per endpoint data path ───────────────────────
+// ─── URL pattern overrides per endpoint data path ───────────────────────
 
-export type NtpDateFormat = 'day' | 'month' | 'year';
+export type NtpUrlPattern = 'standard' | 'month-year' | 'no-dates';
 
-/** Endpoints that need non-standard (non-day) date granularity in the URL. */
-export const NTP_DATE_FORMATS: Record<string, NtpDateFormat> = {
-  Jahresmarktpraemie: 'year',
-  marktpraemie: 'month',
+/**
+ * Endpoints whose URL structure differs from the standard
+ * {data}/{product?}/{dateFrom}/{dateTo} pattern.
+ *
+ * - 'no-dates':   /data/Jahresmarktpraemie              (no date segments)
+ * - 'month-year': /data/marktpraemie/{mF}/{yF}/{mT}/{yT} (month/year ints)
+ */
+export const NTP_URL_PATTERNS: Record<string, NtpUrlPattern> = {
+  Jahresmarktpraemie: 'no-dates',
+  marktpraemie: 'month-year',
 };
 
 // ─── Helper to build NTP URL ────────────────────────────────────────────
 
+function formatStandardDate(date: Date): string {
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const dd = String(date.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
 export function buildNtpUrl(
   endpoint: { data: string; product: string | null },
-  dateFrom: string,
-  dateTo: string
+  dateFrom: Date,
+  dateTo: Date
 ): string {
+  const pattern = NTP_URL_PATTERNS[endpoint.data] || 'standard';
   const base = `${NTP_CONFIG.baseUrl}/${endpoint.data}`;
-  if (endpoint.product) {
-    return `${base}/${endpoint.product}/${dateFrom}/${dateTo}`;
+
+  if (pattern === 'no-dates') {
+    return base;
   }
-  return `${base}/${dateFrom}/${dateTo}`;
+
+  if (pattern === 'month-year') {
+    return `${base}/${dateFrom.getMonth() + 1}/${dateFrom.getFullYear()}/${dateTo.getMonth() + 1}/${dateTo.getFullYear()}`;
+  }
+
+  // standard: {data}/{product?}/{yyyy-MM-dd}/{yyyy-MM-dd}
+  const from = formatStandardDate(dateFrom);
+  const to = formatStandardDate(dateTo);
+  if (endpoint.product) {
+    return `${base}/${endpoint.product}/${from}/${to}`;
+  }
+  return `${base}/${from}/${to}`;
 }
 
 // ─── Cache TTL (seconds) ────────────────────────────────────────────────
