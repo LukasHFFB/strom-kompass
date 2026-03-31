@@ -39,6 +39,7 @@ const CORE_SOURCES: DataSourceDef[] = [
     id: 'prices',
     label: 'Börsenstrompreise (Day-Ahead)',
     category: 'prices',
+    apiSource: 'ENTSO-E',
     path: '/api/energy/prices',
     unit: 'EUR/MWh',
     valueKey: 'price',
@@ -47,6 +48,7 @@ const CORE_SOURCES: DataSourceDef[] = [
     id: 'load',
     label: 'Stromverbrauch (Netzlast)',
     category: 'load',
+    apiSource: 'ENTSO-E',
     path: '/api/energy/load',
     unit: 'MW',
     valueKey: 'value',
@@ -55,6 +57,7 @@ const CORE_SOURCES: DataSourceDef[] = [
     id: `gen_${type}`,
     label: `${label}`,
     category: 'generation',
+    apiSource: 'ENTSO-E',
     path: '/api/energy/generation',
     unit: 'MW',
     valueKey: 'value',
@@ -70,7 +73,7 @@ function getNtpCategory(key: string): DataCategory {
   if (/MARKET|ANNUAL_MARKET|MONTHLY_MARKET/.test(key)) return 'prices';
   if (/MARKETING|DIFF_FEED|BALANCING|INTRADAY/.test(key)) return 'market';
   if (/CURTAILMENT|ABSM|PRODUCTION_BAN|EEG/.test(key)) return 'curtailment';
-  return 'grid'; // everything else (NRV, reserves, redispatch, etc.)
+  return 'grid';
 }
 
 const NTP_LABELS: Record<string, string> = {
@@ -114,7 +117,8 @@ const NTP_SOURCES: DataSourceDef[] = Object.keys(NTP_CONFIG.endpoints).map(key =
   id: `ntp_${key}`,
   label: getNtpLabel(key),
   category: getNtpCategory(key),
-  path: `/api/energy/data?endpoint=${key}`,
+  apiSource: 'Netztransparenz' as const,
+  path: '/api/energy/data',
   unit: '',
   valueKey: 'value',
   endpointKey: key,

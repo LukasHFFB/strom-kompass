@@ -1,5 +1,6 @@
 // ---- Chart Builder Type System ----
 
+export type DisplayType = 'line' | 'area' | 'bar';
 export type ChartType = 'line' | 'area' | 'bar' | 'scatter' | 'heatmap';
 
 export type DataCategory =
@@ -11,10 +12,13 @@ export type DataCategory =
   | 'grid'
   | 'curtailment';
 
+export type ApiSource = 'ENTSO-E' | 'Netztransparenz';
+
 export interface DataSourceDef {
   id: string;
   label: string;
   category: DataCategory;
+  apiSource: ApiSource;
   path: string;
   unit: string;
   /** Key to extract numeric value from API response */
@@ -29,6 +33,7 @@ export interface DatasetConfig {
   sourceId: string;
   color: string;
   yAxis: 'left' | 'right';
+  displayType: DisplayType;
 }
 
 export type AggPeriod = 'none' | 'hourly' | 'daily' | 'weekly' | 'monthly';
@@ -56,6 +61,7 @@ export interface ChartDataset {
   color: string;
   yAxis: 'left' | 'right';
   unit: string;
+  displayType: DisplayType;
 }
 
 // Color palette for datasets

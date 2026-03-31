@@ -19,6 +19,7 @@ import { aggregateData, AGG_PERIOD_OPTIONS, AGG_METHOD_OPTIONS } from '@/lib/cha
 import type {
   DatasetConfig,
   ChartType,
+  DisplayType,
   ChartDataset,
   NormalizedDataPoint,
   DataSourceDef,
@@ -47,6 +48,10 @@ function daysAgo(n: number): string {
 function today(): string {
   return new Date().toISOString().split('T')[0];
 }
+
+const DISPLAY_CYCLE: DisplayType[] = ['line', 'area', 'bar'];
+const DISPLAY_LABELS: Record<DisplayType, string> = { line: 'L', area: 'F', bar: 'B' };
+const DISPLAY_FULL: Record<DisplayType, string> = { line: 'Linie', area: 'Fläche', bar: 'Balken' };
 
 // ---- Data normalization ----
 
@@ -103,6 +108,8 @@ export default function AnalysePage() {
   const [fetchedRaw, setFetchedRaw] = useState<Record<string, any[]>>({});
   const [copied, setCopied] = useState(false);
   const initialized = useRef(false);
+  const abortRef = useRef<AbortController | null>(null);
+  const fetchVersion = useRef(0);
 
   // ---- Restore state from URL on mount ----
 
@@ -126,7 +133,7 @@ export default function AnalysePage() {
     window.history.replaceState(null, '', `?${query}`);
   }, [datasets, chartType, from, to, title, aggPeriod, aggMethod]);
 
-  // ---- Auto-adjust chart type when incompatible with dataset count ----
+  // ---- Auto-adjust chart type when incompatible ----
 
   useEffect(() => {
     if (!initialized.current) return;
@@ -145,7 +152,11 @@ export default function AnalysePage() {
       return;
     }
 
-    let cancelled = false;
+    // Abort previous request
+    if (abortRef.current) abortRef.current.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    const version = ++fetchVersion.current;
 
     async function fetchAll() {
       setLoading(true);
@@ -154,27 +165,36 @@ export default function AnalysePage() {
       try {
         const results: Record<string, any[]> = {};
 
-        // Group by API path to deduplicate
-        const byPath = new Map<string, string[]>();
+        // Build unique fetch keys: path + endpoint + from + to
+        const fetchMap = new Map<string, { url: string; sourceIds: string[] }>();
         for (const ds of datasets) {
           const source = getSourceById(ds.sourceId);
           if (!source) continue;
-          if (!byPath.has(source.path)) byPath.set(source.path, []);
-          byPath.get(source.path)!.push(ds.sourceId);
-        }
 
-        const promises = Array.from(byPath.entries()).map(async ([path, sourceIds]) => {
-          const source = getSourceById(sourceIds[0])!;
           const params = new URLSearchParams();
           params.set('from', from);
           params.set('to', to);
           if (source.endpointKey) params.set('endpoint', source.endpointKey);
 
-          const sep = path.includes('?') ? '&' : '?';
-          const res = await fetch(`${path}${sep}${params.toString()}`);
+          const url = `${source.path}?${params.toString()}`;
+          const key = url; // unique per URL
+
+          if (!fetchMap.has(key)) fetchMap.set(key, { url, sourceIds: [] });
+          fetchMap.get(key)!.sourceIds.push(ds.sourceId);
+        }
+
+        const promises = Array.from(fetchMap.values()).map(async ({ url, sourceIds }) => {
+          const res = await fetch(url, { signal: controller.signal });
+          if (!res.ok) {
+            const text = await res.text().catch(() => '');
+            throw new Error(`HTTP ${res.status} für ${getSourceById(sourceIds[0])?.label || sourceIds[0]}: ${text}`);
+          }
           const json = await res.json();
 
-          if (json.error) throw new Error(`${source.label}: ${json.error}`);
+          if (json.error) {
+            const label = getSourceById(sourceIds[0])?.label || sourceIds[0];
+            throw new Error(`${label}: ${json.error}`);
+          }
           if (!json.data) return;
 
           for (const sid of sourceIds) {
@@ -183,19 +203,29 @@ export default function AnalysePage() {
         });
 
         await Promise.all(promises);
-        if (!cancelled) setFetchedRaw(results);
+
+        // Only update if this is still the latest fetch
+        if (version === fetchVersion.current) {
+          setFetchedRaw(results);
+        }
       } catch (err: any) {
-        if (!cancelled) setError(err.message || 'Fehler beim Laden.');
+        if (err.name === 'AbortError') return;
+        if (version === fetchVersion.current) {
+          setError(err.message || 'Fehler beim Laden.');
+        }
       } finally {
-        if (!cancelled) setLoading(false);
+        if (version === fetchVersion.current) {
+          setLoading(false);
+        }
       }
     }
 
     fetchAll();
-    return () => { cancelled = true; };
+
+    return () => { controller.abort(); };
   }, [datasets, from, to]);
 
-  // ---- Normalize + aggregate fetched data into chart datasets ----
+  // ---- Normalize + aggregate fetched data ----
 
   const chartDatasets: ChartDataset[] = useMemo(() => {
     return datasets
@@ -207,7 +237,6 @@ export default function AnalysePage() {
         let data = normalizeData(ds.sourceId, raw);
         if (data.length === 0) return null;
 
-        // Apply aggregation
         data = aggregateData(data, aggPeriod, aggMethod);
 
         let unit = source.unit;
@@ -220,6 +249,7 @@ export default function AnalysePage() {
           color: ds.color,
           yAxis: ds.yAxis,
           unit: unit || '',
+          displayType: ds.displayType,
         };
       })
       .filter((d): d is ChartDataset => d !== null);
@@ -232,7 +262,7 @@ export default function AnalysePage() {
       if (prev.some(d => d.sourceId === sourceId)) return prev;
       const color = PALETTE[prev.length % PALETTE.length];
       const yAxis = getDefaultAxis(sourceId, prev);
-      return [...prev, { sourceId, color, yAxis }];
+      return [...prev, { sourceId, color, yAxis, displayType: 'line' as DisplayType }];
     });
   }, []);
 
@@ -246,6 +276,21 @@ export default function AnalysePage() {
         d.sourceId === sourceId ? { ...d, yAxis: d.yAxis === 'left' ? 'right' : 'left' } : d,
       ),
     );
+  }, []);
+
+  const cycleDisplayType = useCallback((sourceId: string) => {
+    setDatasets(prev =>
+      prev.map(d => {
+        if (d.sourceId !== sourceId) return d;
+        const idx = DISPLAY_CYCLE.indexOf(d.displayType);
+        const next = DISPLAY_CYCLE[(idx + 1) % DISPLAY_CYCLE.length];
+        return { ...d, displayType: next };
+      }),
+    );
+  }, []);
+
+  const setAllDisplayType = useCallback((dt: DisplayType) => {
+    setDatasets(prev => prev.map(d => ({ ...d, displayType: dt })));
   }, []);
 
   const toggleSource = useCallback(
@@ -269,6 +314,14 @@ export default function AnalysePage() {
     if (days === 0) { setFrom(today()); setTo(today()); }
     else { setFrom(daysAgo(days)); setTo(daysAgo(1)); }
   }, []);
+
+  const handleChartType = useCallback((ct: ChartType) => {
+    setChartType(ct);
+    // When switching to a line/area/bar mode, also set all datasets to that display type
+    if (ct === 'line' || ct === 'area' || ct === 'bar') {
+      setAllDisplayType(ct);
+    }
+  }, [setAllDisplayType]);
 
   const handleShare = useCallback(() => {
     const url = getShareUrl({ datasets, chartType, from, to, title, aggPeriod, aggMethod });
@@ -304,11 +357,7 @@ export default function AnalysePage() {
 
   function renderChart() {
     if (datasets.length === 0) {
-      return (
-        <div className="empty-state">
-          Wähle links Datenquellen aus, um ein Diagramm zu erstellen.
-        </div>
-      );
+      return <div className="empty-state">Wähle links Datenquellen aus, um ein Diagramm zu erstellen.</div>;
     }
 
     if (loading && chartDatasets.length === 0) {
@@ -327,14 +376,7 @@ export default function AnalysePage() {
       return <ScatterChart datasetX={chartDatasets[0]} datasetY={chartDatasets[1]} height={450} />;
     }
 
-    // line, area, bar
-    return (
-      <MultiAxisChart
-        datasets={chartDatasets}
-        chartType={chartType as 'line' | 'area' | 'bar'}
-        height={450}
-      />
-    );
+    return <MultiAxisChart datasets={chartDatasets} height={450} />;
   }
 
   // ---- Render ----
@@ -368,7 +410,14 @@ export default function AnalysePage() {
                       <span className="chip-color" style={{ background: ds.color }} />
                       <span className="chip-label">{source?.label || ds.sourceId}</span>
                       <button
-                        className="chip-axis"
+                        className="chip-btn"
+                        onClick={() => cycleDisplayType(ds.sourceId)}
+                        title={`Darstellung: ${DISPLAY_FULL[ds.displayType]} (klicken zum Wechseln)`}
+                      >
+                        {DISPLAY_LABELS[ds.displayType]}
+                      </button>
+                      <button
+                        className="chip-btn"
                         onClick={() => toggleAxis(ds.sourceId)}
                         title={ds.yAxis === 'left' ? 'Linke Y-Achse' : 'Rechte Y-Achse'}
                       >
@@ -413,6 +462,7 @@ export default function AnalysePage() {
                               <input type="checkbox" checked={isSelected} onChange={() => toggleSource(s.id)} />
                               {ds && <span className="chip-color" style={{ background: ds.color }} />}
                               <span className="source-label">{s.label}</span>
+                              <span className="source-badge">{s.apiSource === 'ENTSO-E' ? 'E' : 'NTP'}</span>
                               {s.unit && <span className="source-unit">{s.unit}</span>}
                             </label>
                           );
@@ -438,21 +488,18 @@ export default function AnalysePage() {
                   <button
                     key={opt.id}
                     className={`chart-type-btn ${chartType === opt.id ? 'active' : ''} ${!isCompat ? 'disabled' : ''}`}
-                    onClick={() => isCompat && setChartType(opt.id)}
+                    onClick={() => isCompat && handleChartType(opt.id)}
                     disabled={!isCompat}
                   >
                     <div style={{ fontWeight: 600 }}>{opt.label}</div>
-                    <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
-                      {opt.description}
-                    </div>
+                    <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>{opt.description}</div>
                   </button>
                 );
               })}
             </div>
-            {!compatibleTypes.includes(chartType) && datasets.length > 0 && (
-              <div style={{ fontSize: '0.7rem', color: '#b91c1c', marginTop: '0.4rem' }}>
-                {chartType === 'scatter' && 'Streudiagramm benötigt genau 2 Datensätze.'}
-                {chartType === 'heatmap' && 'Heatmap benötigt genau 1 Datensatz.'}
+            {chartType !== 'scatter' && chartType !== 'heatmap' && datasets.length > 0 && (
+              <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginTop: '0.4rem' }}>
+                Tipp: Klicke auf L/F/B bei einem Datensatz, um dessen Darstellung individuell zu ändern.
               </div>
             )}
           </div>
@@ -552,9 +599,7 @@ export default function AnalysePage() {
           )}
 
           <div className="preview-header">
-            <h2 style={{ margin: 0, fontSize: '1.25rem' }}>
-              {title || 'Vorschau'}
-            </h2>
+            <h2 style={{ margin: 0, fontSize: '1.25rem' }}>{title || 'Vorschau'}</h2>
             <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
               {totalPoints > 0 && `${totalPoints.toLocaleString('de-DE')} Datenpunkte`}
               {aggPeriod !== 'none' && ` (${AGG_PERIOD_OPTIONS.find(o => o.id === aggPeriod)?.label}, ${AGG_METHOD_OPTIONS.find(o => o.id === aggMethod)?.label})`}
@@ -603,226 +648,130 @@ export default function AnalysePage() {
           margin-bottom: 0.75rem;
         }
         .step-badge {
-          width: 22px;
-          height: 22px;
-          border-radius: 50%;
-          background: var(--primary);
-          color: #fff;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          font-size: 0.7rem;
-          font-weight: 700;
-          flex-shrink: 0;
+          width: 22px; height: 22px; border-radius: 50%;
+          background: var(--primary); color: #fff;
+          display: flex; align-items: center; justify-content: center;
+          font-size: 0.7rem; font-weight: 700; flex-shrink: 0;
         }
         .step-title { font-weight: 600; font-size: 0.85rem; }
         .step-count { margin-left: auto; font-size: 0.7rem; color: var(--text-muted); }
 
         .selected-chips {
-          display: flex;
-          flex-direction: column;
-          gap: 0.35rem;
-          margin-bottom: 0.75rem;
+          display: flex; flex-direction: column; gap: 0.35rem; margin-bottom: 0.75rem;
         }
         .chip {
-          display: flex;
-          align-items: center;
-          gap: 0.4rem;
-          padding: 0.3rem 0.5rem;
-          background: var(--primary-light);
-          border-radius: 4px;
-          font-size: 0.75rem;
+          display: flex; align-items: center; gap: 0.4rem;
+          padding: 0.3rem 0.5rem; background: var(--primary-light);
+          border-radius: 4px; font-size: 0.75rem;
         }
         .chip-color { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; }
         .chip-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .chip-axis {
-          background: var(--primary);
-          color: #fff;
-          border: none;
-          border-radius: 3px;
-          width: 20px;
-          height: 18px;
-          font-size: 0.65rem;
-          font-weight: 700;
-          cursor: pointer;
-          flex-shrink: 0;
+        .chip-btn {
+          background: var(--primary); color: #fff; border: none;
+          border-radius: 3px; width: 20px; height: 18px;
+          font-size: 0.65rem; font-weight: 700;
+          cursor: pointer; flex-shrink: 0;
         }
+        .chip-btn:hover { opacity: 0.85; }
         .chip-remove {
-          background: none;
-          border: none;
-          color: var(--text-muted);
-          cursor: pointer;
-          font-size: 0.8rem;
-          padding: 0 2px;
-          flex-shrink: 0;
+          background: none; border: none; color: var(--text-muted);
+          cursor: pointer; font-size: 0.8rem; padding: 0 2px; flex-shrink: 0;
         }
         .chip-remove:hover { color: #b91c1c; }
 
         .source-list {
-          max-height: 35vh;
-          overflow-y: auto;
-          border: 1px solid var(--border);
-          border-radius: 4px;
+          max-height: 35vh; overflow-y: auto;
+          border: 1px solid var(--border); border-radius: 4px;
         }
         .category-header {
-          display: flex;
-          align-items: center;
-          gap: 0.4rem;
-          width: 100%;
-          padding: 0.5rem 0.6rem;
-          background: #f8f8f8;
-          border: none;
-          border-bottom: 1px solid var(--border);
-          cursor: pointer;
-          font-size: 0.75rem;
-          font-weight: 600;
-          text-align: left;
-          color: var(--text);
+          display: flex; align-items: center; gap: 0.4rem; width: 100%;
+          padding: 0.5rem 0.6rem; background: #f8f8f8; border: none;
+          border-bottom: 1px solid var(--border); cursor: pointer;
+          font-size: 0.75rem; font-weight: 600; text-align: left; color: var(--text);
         }
         .category-header:hover { background: #f0f0f0; }
         .category-count { margin-left: auto; color: var(--text-muted); font-weight: 400; }
         .category-items { border-bottom: 1px solid var(--border); }
         .source-item {
-          display: flex;
-          align-items: center;
-          gap: 0.4rem;
+          display: flex; align-items: center; gap: 0.4rem;
           padding: 0.3rem 0.6rem 0.3rem 1.2rem;
-          cursor: pointer;
-          font-size: 0.75rem;
+          cursor: pointer; font-size: 0.75rem;
         }
         .source-item:hover { background: #fafafa; }
         .source-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .source-badge {
+          font-size: 0.55rem; font-weight: 700; padding: 1px 4px;
+          border-radius: 3px; flex-shrink: 0; text-transform: uppercase;
+          background: #e5e7eb; color: #374151;
+        }
         .source-unit { color: var(--text-muted); font-size: 0.65rem; flex-shrink: 0; }
 
-        .chart-type-grid {
-          display: grid;
-          grid-template-columns: 1fr 1fr;
-          gap: 0.5rem;
-        }
+        .chart-type-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; }
         .chart-type-btn {
-          padding: 0.5rem;
-          border-radius: 6px;
-          border: 1px solid var(--border);
-          background: #fff;
-          cursor: pointer;
-          text-align: left;
-          font-size: 0.8rem;
+          padding: 0.5rem; border-radius: 6px; border: 1px solid var(--border);
+          background: #fff; cursor: pointer; text-align: left; font-size: 0.8rem;
           transition: all 0.15s;
         }
         .chart-type-btn:hover:not(.disabled) { border-color: var(--primary); }
         .chart-type-btn.active {
-          border-color: var(--primary);
-          background: var(--primary-light);
-          color: var(--primary);
+          border-color: var(--primary); background: var(--primary-light); color: var(--primary);
         }
-        .chart-type-btn.disabled {
-          opacity: 0.4;
-          cursor: not-allowed;
-        }
+        .chart-type-btn.disabled { opacity: 0.4; cursor: not-allowed; }
 
         .preset-row { display: flex; gap: 0.35rem; flex-wrap: wrap; }
         .preset-btn {
-          padding: 0.3rem 0.6rem;
-          border-radius: 4px;
-          border: 1px solid var(--border);
-          background: #fff;
-          cursor: pointer;
-          font-size: 0.7rem;
-          font-weight: 500;
+          padding: 0.3rem 0.6rem; border-radius: 4px; border: 1px solid var(--border);
+          background: #fff; cursor: pointer; font-size: 0.7rem; font-weight: 500;
           transition: all 0.15s;
         }
-        .preset-btn:hover {
-          border-color: var(--primary);
-          background: var(--primary-light);
-        }
+        .preset-btn:hover { border-color: var(--primary); background: var(--primary-light); }
         .preset-active {
-          border-color: var(--primary) !important;
-          background: var(--primary-light) !important;
-          color: var(--primary) !important;
-          font-weight: 600 !important;
+          border-color: var(--primary) !important; background: var(--primary-light) !important;
+          color: var(--primary) !important; font-weight: 600 !important;
         }
         .input-label {
-          display: block;
-          font-size: 0.7rem;
-          font-weight: 600;
-          margin-bottom: 0.25rem;
-          color: var(--text-muted);
+          display: block; font-size: 0.7rem; font-weight: 600;
+          margin-bottom: 0.25rem; color: var(--text-muted);
         }
         .builder-input {
-          width: 100%;
-          padding: 0.4rem 0.5rem;
-          border-radius: 4px;
-          border: 1px solid var(--border);
-          font-size: 0.8rem;
-          font-family: inherit;
+          width: 100%; padding: 0.4rem 0.5rem; border-radius: 4px;
+          border: 1px solid var(--border); font-size: 0.8rem; font-family: inherit;
         }
 
         .share-btn {
-          width: 100%;
-          padding: 0.6rem;
-          border-radius: 6px;
-          border: 1px solid var(--primary);
-          background: var(--primary);
-          color: #fff;
-          cursor: pointer;
-          font-weight: 600;
-          font-size: 0.8rem;
-          transition: opacity 0.15s;
+          width: 100%; padding: 0.6rem; border-radius: 6px;
+          border: 1px solid var(--primary); background: var(--primary); color: #fff;
+          cursor: pointer; font-weight: 600; font-size: 0.8rem; transition: opacity 0.15s;
         }
         .share-btn:hover { opacity: 0.9; }
         .share-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
         .builder-preview {
-          min-height: 88vh;
-          display: flex;
-          flex-direction: column;
-          position: relative;
-          padding: 0 !important;
+          min-height: 88vh; display: flex; flex-direction: column;
+          position: relative; padding: 0 !important;
         }
         .preview-header {
-          padding: 1rem 1.5rem;
-          border-bottom: 1px solid var(--border);
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
+          padding: 1rem 1.5rem; border-bottom: 1px solid var(--border);
+          display: flex; justify-content: space-between; align-items: center;
         }
         .preview-body { flex: 1; padding: 1.5rem; }
         .empty-state {
-          height: 100%;
-          min-height: 400px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          color: var(--text-muted);
-          border: 2px dashed var(--border);
-          border-radius: 12px;
-          font-size: 0.9rem;
-          text-align: center;
-          padding: 2rem;
+          height: 100%; min-height: 400px;
+          display: flex; align-items: center; justify-content: center;
+          color: var(--text-muted); border: 2px dashed var(--border);
+          border-radius: 12px; font-size: 0.9rem; text-align: center; padding: 2rem;
         }
         .error-box {
-          background: #fff1f2;
-          color: #991b1b;
-          border: 1px solid #fecaca;
-          padding: 0.75rem 1rem;
-          border-radius: 6px;
-          font-size: 0.85rem;
-          margin-bottom: 1rem;
+          background: #fff1f2; color: #991b1b; border: 1px solid #fecaca;
+          padding: 0.75rem 1rem; border-radius: 6px; font-size: 0.85rem; margin-bottom: 1rem;
         }
 
         .loading-bar-track {
-          position: absolute;
-          top: 0; left: 0;
-          width: 100%;
-          height: 3px;
-          background: #eee;
-          overflow: hidden;
-          z-index: 10;
+          position: absolute; top: 0; left: 0; width: 100%; height: 3px;
+          background: #eee; overflow: hidden; z-index: 10;
         }
         .loading-bar-fill {
-          height: 100%;
-          width: 40%;
-          background: var(--primary);
+          height: 100%; width: 40%; background: var(--primary);
           animation: slide 1s infinite linear;
         }
         @keyframes slide {
@@ -831,8 +780,7 @@ export default function AnalysePage() {
         }
         .loading-shimmer {
           background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
-          background-size: 200% 100%;
-          animation: shimmer 1.5s infinite;
+          background-size: 200% 100%; animation: shimmer 1.5s infinite;
         }
         @keyframes shimmer {
           0% { background-position: 200% 0; }

@@ -14,8 +14,6 @@ import { bisector } from 'd3-array';
 import { ParentSize } from '@visx/responsive';
 import type { ChartDataset } from '@/lib/chart-builder/types';
 
-// ---- Tooltip styling ----
-
 const tooltipStyles = {
   ...defaultStyles,
   background: 'rgba(0,0,0,0.85)',
@@ -28,8 +26,6 @@ const tooltipStyles = {
   maxWidth: '320px',
 };
 
-// ---- Types ----
-
 interface TooltipData {
   timestamp: Date;
   values: { dataset: ChartDataset; value: number }[];
@@ -37,18 +33,16 @@ interface TooltipData {
 
 interface Props {
   datasets: ChartDataset[];
-  chartType: 'line' | 'area' | 'bar';
   height?: number;
 }
 
-// ---- Inner chart (receives measured width) ----
+const DISPLAY_LABELS: Record<string, string> = {
+  line: 'Linie',
+  area: 'Fläche',
+  bar: 'Balken',
+};
 
-function MultiAxisChartInner({
-  datasets,
-  chartType,
-  width,
-  height,
-}: Props & { width: number; height: number }) {
+function MultiAxisChartInner({ datasets, width, height }: Props & { width: number; height: number }) {
   const { showTooltip, hideTooltip, tooltipData, tooltipLeft = 0, tooltipTop = 0 } =
     useTooltip<TooltipData>();
 
@@ -61,7 +55,6 @@ function MultiAxisChartInner({
   const innerWidth = width - marginLeft - marginRight;
   const innerHeight = height - marginTop - marginBottom;
 
-  // Shared time domain
   const allTimestamps = useMemo(() => {
     const set = new Set<number>();
     for (const ds of datasets) {
@@ -79,7 +72,6 @@ function MultiAxisChartInner({
     });
   }, [allTimestamps, innerWidth]);
 
-  // Separate Y scales
   const leftDatasets = useMemo(() => datasets.filter(d => d.yAxis === 'left'), [datasets]);
   const rightDatasets = useMemo(() => datasets.filter(d => d.yAxis === 'right'), [datasets]);
 
@@ -103,7 +95,6 @@ function MultiAxisChartInner({
 
   const yScaleFor = (ds: ChartDataset) => (ds.yAxis === 'right' ? yScaleRight : yScaleLeft);
 
-  // Tooltip bisector
   const bisectDate = useMemo(
     () => bisector<{ timestamp: string; value: number }, Date>(d => new Date(d.timestamp)).left,
     [],
@@ -147,7 +138,6 @@ function MultiAxisChartInner({
   return (
     <div style={{ position: 'relative' }}>
       <svg width={width} height={height}>
-        {/* Gradients */}
         {datasets.map(ds => (
           <LinearGradient
             key={`grad-${ds.id}`}
@@ -168,63 +158,55 @@ function MultiAxisChartInner({
             strokeOpacity={0.8}
           />
 
-          {/* Render each dataset */}
+          {/* Render each dataset with its own display type */}
           {datasets.map((ds, dsIdx) => {
             const yScale = yScaleFor(ds);
-            const barWidth = chartType === 'bar'
-              ? Math.max(1, (innerWidth / (ds.data.length || 1) / datasets.length) - 1)
-              : 0;
-            const barOffset = chartType === 'bar' ? dsIdx * barWidth : 0;
+            const dt = ds.displayType || 'line';
 
-            return (
-              <g key={ds.id}>
-                {chartType === 'bar' ? (
-                  ds.data.map((d, i) => {
+            if (dt === 'bar') {
+              const barWidth = Math.max(1, (innerWidth / (ds.data.length || 1) / datasets.length) - 1);
+              const barOffset = dsIdx * barWidth;
+              return (
+                <g key={ds.id}>
+                  {ds.data.map((d, i) => {
                     const x = (xScale(new Date(d.timestamp)) ?? 0) + barOffset;
                     const yVal = yScale(d.value) ?? 0;
                     const yZero = yScale(0) ?? innerHeight;
                     const barHeight = Math.abs(yZero - yVal);
                     const barY = d.value >= 0 ? yVal : yZero;
                     return (
-                      <rect
-                        key={i}
-                        x={x - barWidth / 2}
-                        y={barY}
-                        width={barWidth}
-                        height={barHeight}
-                        fill={ds.color}
-                        fillOpacity={0.7}
-                        rx={1}
-                      />
+                      <rect key={i} x={x - barWidth / 2} y={barY} width={barWidth} height={barHeight}
+                        fill={ds.color} fillOpacity={0.7} rx={1} />
                     );
-                  })
-                ) : (
-                  <>
-                    {chartType === 'area' && (
-                      <AreaClosed
-                        data={ds.data}
-                        x={d => xScale(new Date(d.timestamp)) ?? 0}
-                        y={d => yScale(d.value) ?? 0}
-                        yScale={yScale}
-                        curve={curveMonotoneX}
-                        fill={`url(#gradient-${ds.id})`}
-                      />
-                    )}
-                    <LinePath
-                      data={ds.data}
-                      x={d => xScale(new Date(d.timestamp)) ?? 0}
-                      y={d => yScale(d.value) ?? 0}
-                      curve={curveMonotoneX}
-                      stroke={ds.color}
-                      strokeWidth={2}
-                    />
-                  </>
+                  })}
+                </g>
+              );
+            }
+
+            return (
+              <g key={ds.id}>
+                {dt === 'area' && (
+                  <AreaClosed
+                    data={ds.data}
+                    x={d => xScale(new Date(d.timestamp)) ?? 0}
+                    y={d => yScale(d.value) ?? 0}
+                    yScale={yScale}
+                    curve={curveMonotoneX}
+                    fill={`url(#gradient-${ds.id})`}
+                  />
                 )}
+                <LinePath
+                  data={ds.data}
+                  x={d => xScale(new Date(d.timestamp)) ?? 0}
+                  y={d => yScale(d.value) ?? 0}
+                  curve={curveMonotoneX}
+                  stroke={ds.color}
+                  strokeWidth={2}
+                />
               </g>
             );
           })}
 
-          {/* Axes */}
           <AxisBottom
             top={innerHeight}
             scale={xScale}
@@ -255,7 +237,6 @@ function MultiAxisChartInner({
             />
           )}
 
-          {/* Invisible overlay for tooltip */}
           <rect
             width={innerWidth}
             height={innerHeight}
@@ -266,7 +247,6 @@ function MultiAxisChartInner({
             onTouchEnd={hideTooltip}
           />
 
-          {/* Crosshair */}
           {tooltipData && (
             <line
               x1={xScale(tooltipData.timestamp)}
@@ -279,8 +259,6 @@ function MultiAxisChartInner({
               pointerEvents="none"
             />
           )}
-
-          {/* Dots at intersection */}
           {tooltipData &&
             tooltipData.values.map(({ dataset: ds, value }) => {
               const yScale = yScaleFor(ds);
@@ -300,88 +278,35 @@ function MultiAxisChartInner({
         </Group>
       </svg>
 
-      {/* Tooltip box */}
       {tooltipData && (
         <TooltipWithBounds top={tooltipTop} left={tooltipLeft} style={tooltipStyles}>
-          <div
-            style={{
-              fontWeight: 600,
-              marginBottom: '6px',
-              borderBottom: '1px solid rgba(255,255,255,0.2)',
-              paddingBottom: '4px',
-            }}
-          >
+          <div style={{ fontWeight: 600, marginBottom: '6px', borderBottom: '1px solid rgba(255,255,255,0.2)', paddingBottom: '4px' }}>
             {tooltipData.timestamp.toLocaleString('de-DE', {
-              day: '2-digit',
-              month: '2-digit',
-              year: 'numeric',
-              hour: '2-digit',
-              minute: '2-digit',
+              day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
             })}
           </div>
           {tooltipData.values.map(({ dataset: ds, value }) => (
-            <div
-              key={ds.id}
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                gap: '16px',
-                fontSize: '12px',
-                lineHeight: '1.6',
-              }}
-            >
+            <div key={ds.id} style={{ display: 'flex', justifyContent: 'space-between', gap: '16px', fontSize: '12px', lineHeight: '1.6' }}>
               <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <span
-                  style={{
-                    width: 8,
-                    height: 8,
-                    borderRadius: 2,
-                    background: ds.color,
-                    display: 'inline-block',
-                  }}
-                />
+                <span style={{ width: 8, height: 8, borderRadius: 2, background: ds.color, display: 'inline-block' }} />
                 {ds.label}
               </span>
               <span style={{ fontWeight: 600 }}>
-                {value.toLocaleString('de-DE', {
-                  minimumFractionDigits: 1,
-                  maximumFractionDigits: 2,
-                })}{' '}
-                {ds.unit}
+                {value.toLocaleString('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 2 })} {ds.unit}
               </span>
             </div>
           ))}
         </TooltipWithBounds>
       )}
 
-      {/* Legend */}
-      <div
-        style={{
-          display: 'flex',
-          flexWrap: 'wrap',
-          gap: '8px 16px',
-          marginTop: '12px',
-          paddingLeft: marginLeft,
-        }}
-      >
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px 16px', marginTop: '12px', paddingLeft: marginLeft }}>
         {datasets.map(ds => (
-          <div
-            key={ds.id}
-            style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: '#666' }}
-          >
-            <span
-              style={{
-                width: 10,
-                height: 10,
-                borderRadius: 2,
-                background: ds.color,
-                display: 'inline-block',
-              }}
-            />
+          <div key={ds.id} style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: '#666' }}>
+            <span style={{ width: 10, height: 10, borderRadius: 2, background: ds.color, display: 'inline-block' }} />
             {ds.label}
-            {ds.yAxis === 'right' && (
-              <span style={{ fontSize: '9px', color: '#999' }}>(rechts)</span>
-            )}
+            <span style={{ fontSize: '9px', color: '#999' }}>
+              ({DISPLAY_LABELS[ds.displayType] || ds.displayType}{ds.yAxis === 'right' ? ', rechts' : ''})
+            </span>
           </div>
         ))}
       </div>
@@ -389,20 +314,10 @@ function MultiAxisChartInner({
   );
 }
 
-// ---- Responsive wrapper ----
-
-export default function MultiAxisChart({ datasets, chartType = 'line', height = 400 }: Props) {
+export default function MultiAxisChart({ datasets, height = 400 }: Props) {
   if (datasets.length === 0 || datasets.every(ds => ds.data.length === 0)) {
     return (
-      <div
-        style={{
-          height,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          color: '#888',
-        }}
-      >
+      <div style={{ height, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#888' }}>
         Keine Daten verfügbar
       </div>
     );
@@ -411,14 +326,7 @@ export default function MultiAxisChart({ datasets, chartType = 'line', height = 
   return (
     <ParentSize>
       {({ width }) =>
-        width > 0 ? (
-          <MultiAxisChartInner
-            datasets={datasets}
-            chartType={chartType}
-            width={width}
-            height={height}
-          />
-        ) : null
+        width > 0 ? <MultiAxisChartInner datasets={datasets} width={width} height={height} /> : null
       }
     </ParentSize>
   );
