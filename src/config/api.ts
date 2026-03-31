@@ -133,6 +133,16 @@ export const NTP_CONFIG = {
   },
 } as const;
 
+// ─── Date format overrides per endpoint data path ───────────────────────
+
+export type NtpDateFormat = 'day' | 'month' | 'year';
+
+/** Endpoints that need non-standard (non-day) date granularity in the URL. */
+export const NTP_DATE_FORMATS: Record<string, NtpDateFormat> = {
+  Jahresmarktpraemie: 'year',
+  marktpraemie: 'month',
+};
+
 // ─── Helper to build NTP URL ────────────────────────────────────────────
 
 export function buildNtpUrl(
