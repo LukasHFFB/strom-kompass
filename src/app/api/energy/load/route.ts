@@ -25,32 +25,37 @@ export async function GET(request: Request) {
     // 1. Try DB first
     let data = await queryLoadData(fromDate, toDate);
 
-    // 2. Fallback to API if no data
+    // 2. Fallback to API if no data — fetch in chunks to avoid range limits
     if (data.length === 0) {
-      console.log(`[Load API] Cache miss, fetching from ENTSO-E...`);
-      
-      // Try DE-LU first (10Y1001A1001A82H)
-      let jsonObj = await fetchLoad(fromDate, toDate);
-      
-      // If no data, try DE-only (10Y1001A1001A83F)
-      if (!jsonObj) {
-        console.log(`[Load API] No data for DE-LU, trying DE-only legacy EIC...`);
-        jsonObj = await fetchLoad(fromDate, toDate, '10Y1001A1001A83F');
+      console.log(`[Load API] Cache miss, fetching from ENTSO-E in chunks...`);
+
+      const msPerDay = 86_400_000;
+      const chunks: { from: Date; to: Date }[] = [];
+      let start = fromDate.getTime();
+      const end = toDate.getTime();
+      while (start < end) {
+        const chunkEnd = Math.min(start + 90 * msPerDay, end);
+        chunks.push({ from: new Date(start), to: new Date(chunkEnd) });
+        start = chunkEnd;
+      }
+      if (chunks.length === 0) chunks.push({ from: fromDate, to: toDate });
+
+      const allParsed: any[] = [];
+      for (const chunk of chunks) {
+        let jsonObj = await fetchLoad(chunk.from, chunk.to);
+        if (!jsonObj) {
+          jsonObj = await fetchLoad(chunk.from, chunk.to, '10Y1001A1001A83F');
+        }
+        if (jsonObj) {
+          allParsed.push(...parseActualLoad(jsonObj));
+        }
       }
 
-      if (!jsonObj) {
-        return NextResponse.json({
-          data: [],
-          meta: { source: DataSource.ENTSOE, from, to, count: 0, fetchedAt: new Date().toISOString(), message: 'No data returned from ENTSO-E' }
-        });
-      }
+      console.log(`[Load API] Parsed ${allParsed.length} records total`);
 
-      const parsedData = parseActualLoad(jsonObj);
-      console.log(`[Load API] Parsed ${parsedData.length} records`);
-      
-      if (parsedData.length > 0) {
-        await upsertLoadData(parsedData);
-        data = parsedData;
+      if (allParsed.length > 0) {
+        await upsertLoadData(allParsed);
+        data = allParsed;
       }
     }
 

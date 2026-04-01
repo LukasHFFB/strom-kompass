@@ -62,16 +62,20 @@ export async function getConsolidatedPrices(
     return wrapResponse(dbData, DataSource.ENTSOE, from, to);
   }
 
-  // 2. Fallback to API
-  const raw = await fetchDayAheadPrices(from, to);
-  const data = raw ? parseDayAheadPrices(raw) : [];
-
-  if (data.length > 0) {
-    await upsertPriceData(data);
+  // 2. Fallback to API — fetch in chunks to avoid ENTSO-E range limits
+  const chunks = chunkDateRange(from, to);
+  const allData: PriceDataPoint[] = [];
+  for (const chunk of chunks) {
+    const raw = await fetchDayAheadPrices(chunk.from, chunk.to);
+    if (raw) allData.push(...parseDayAheadPrices(raw));
   }
 
-  setCache(key, data, CACHE_TTL.PRICES);
-  return wrapResponse(data, DataSource.ENTSOE, from, to);
+  if (allData.length > 0) {
+    await upsertPriceData(allData);
+  }
+
+  setCache(key, allData, CACHE_TTL.PRICES);
+  return wrapResponse(allData, DataSource.ENTSOE, from, to);
 }
 
 // ─── Generation Mix ─────────────────────────────────────────────────────
@@ -92,16 +96,20 @@ export async function getGenerationMix(
     return wrapResponse(dbData, DataSource.ENTSOE, from, to);
   }
 
-  // 2. Fallback to API
-  const raw = await fetchActualGeneration(from, to);
-  const data = raw ? parseActualGeneration(raw) : [];
-
-  if (data.length > 0) {
-    await upsertGenerationData(data);
+  // 2. Fallback to API — fetch in chunks to avoid ENTSO-E range limits
+  const chunks = chunkDateRange(from, to);
+  const allData: GenerationDataPoint[] = [];
+  for (const chunk of chunks) {
+    const raw = await fetchActualGeneration(chunk.from, chunk.to);
+    if (raw) allData.push(...parseActualGeneration(raw));
   }
 
-  setCache(key, data, CACHE_TTL.GENERATION);
-  return wrapResponse(data, DataSource.ENTSOE, from, to);
+  if (allData.length > 0) {
+    await upsertGenerationData(allData);
+  }
+
+  setCache(key, allData, CACHE_TTL.GENERATION);
+  return wrapResponse(allData, DataSource.ENTSOE, from, to);
 }
 
 // ─── Installed Capacity ─────────────────────────────────────────────────
@@ -214,6 +222,27 @@ export async function getForecasts(
 
   setCache(key, data, CACHE_TTL.FORECASTS);
   return wrapResponse(data, DataSource.NETZTRANSPARENZ, from, to);
+}
+
+// ─── Date Chunking ──────────────────────────────────────────────────────
+
+/**
+ * Split a date range into chunks of maxDays to avoid ENTSO-E range limits.
+ * The API occasionally rejects long requests with code 999.
+ */
+function chunkDateRange(from: Date, to: Date, maxDays = 90): { from: Date; to: Date }[] {
+  const msPerDay = 86_400_000;
+  const chunks: { from: Date; to: Date }[] = [];
+  let start = from.getTime();
+  const end = to.getTime();
+
+  while (start < end) {
+    const chunkEnd = Math.min(start + maxDays * msPerDay, end);
+    chunks.push({ from: new Date(start), to: new Date(chunkEnd) });
+    start = chunkEnd;
+  }
+
+  return chunks.length > 0 ? chunks : [{ from, to }];
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────

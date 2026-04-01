@@ -86,7 +86,9 @@ export async function GET(request: NextRequest) {
     }
 
     const rawCsv = await fetchNtpEndpoint(endpoint, dateFrom, dateTo);
+    console.log(`[API-DATA] ${endpointKey}: response length=${rawCsv.length}, first 200 chars: ${rawCsv.substring(0, 200)}`);
     const data = parseEndpointData(endpointKey, rawCsv);
+    console.log(`[API-DATA] ${endpointKey}: parsed ${data.length} records`);
 
     return NextResponse.json({
       meta: {

@@ -110,24 +110,68 @@ export function parseProjection(
 
 export function parseMarketValues(csv: string): MarketValue[] {
   const rows = parseCSV(csv);
-  const result: MarketValue[] = [];
+  if (rows.length === 0) {
+    console.log('[parseMarketValues] No CSV rows parsed. Raw length:', csv.length);
+    return [];
+  }
 
+  const headers = Object.keys(rows[0]);
+  console.log('[parseMarketValues] CSV columns:', headers.join(', '));
+
+  // Flexible column detection — match by known names first, then by substring
+  const dateCol =
+    headers.find(h => /^(Datum|Monat|Date|Jahr|Year|Abrechnungsmonat)$/i.test(h)) ||
+    headers.find(h => /datum|date|monat|jahr|year/i.test(h));
+
+  const valueCol =
+    headers.find(h => /^(Marktwert|MarketValue|Wert|Value|Marktpr.mie|Jahresmarktwert|Monatsmarktwert)$/i.test(h)) ||
+    headers.find(h => /wert|value|pr.mie|praemie/i.test(h));
+
+  const techCol =
+    headers.find(h => /^(Technologie|Technology|Energietr.ger)$/i.test(h)) ||
+    headers.find(h => /technolog|energietr/i.test(h));
+
+  // Detect unit from value column header (e.g. "Marktwert (ct/kWh)")
+  let unit = 'EUR/MWh';
+  let convertCtToEur = false;
+  if (valueCol) {
+    const unitMatch = valueCol.match(/\(([^)]+)\)/);
+    if (unitMatch) {
+      const rawUnit = unitMatch[1].toLowerCase();
+      if (rawUnit.includes('ct/kwh')) {
+        convertCtToEur = true; // ct/kWh → EUR/MWh (* 10)
+      } else if (rawUnit.includes('eur/mwh')) {
+        unit = 'EUR/MWh';
+      } else {
+        unit = unitMatch[1];
+      }
+    }
+  }
+
+  if (!dateCol || !valueCol) {
+    console.log(`[parseMarketValues] Could not find required columns. dateCol=${dateCol}, valueCol=${valueCol}. Headers: ${headers.join('; ')}`);
+    return [];
+  }
+
+  console.log(`[parseMarketValues] Using: date="${dateCol}", value="${valueCol}", tech="${techCol || 'none'}"`);
+
+  const result: MarketValue[] = [];
   for (const row of rows) {
-    const dateStr = row['Datum'] ?? row['Monat'] ?? row['Date'] ?? '';
-    const techStr = row['Technologie'] ?? row['Technology'] ?? '';
-    const valueStr =
-      row['Marktwert'] ?? row['MarketValue'] ?? row['Wert'] ?? '';
+    const dateStr = row[dateCol] ?? '';
+    const valueStr = row[valueCol] ?? '';
+    const techStr = techCol ? (row[techCol] ?? '') : '';
 
     if (!dateStr || !valueStr) continue;
 
     const energyType = mapTechnologyToEnergyType(techStr);
-    const value = parseGermanNumber(valueStr);
+    let value = parseGermanNumber(valueStr);
+    if (convertCtToEur) value = value * 10;
 
     result.push({
       timestamp: parseFlexibleDate(dateStr),
       type: energyType,
-      value,
-      unit: 'EUR/MWh',
+      value: Math.round(value * 100) / 100,
+      unit,
       source: DataSource.NETZTRANSPARENZ,
     });
   }
@@ -139,6 +183,12 @@ export function parseMarketValues(csv: string): MarketValue[] {
 
 export function parseGenericNtp(csv: string): any[] {
   const rows = parseCSV(csv);
+  if (rows.length === 0) {
+    console.log('[parseGenericNtp] No CSV rows parsed. Raw length:', csv.length, '| First 300 chars:', csv.substring(0, 300));
+    return [];
+  }
+  console.log('[parseGenericNtp] CSV columns:', Object.keys(rows[0]).join(', '), '| Rows:', rows.length);
+
   const result: any[] = [];
 
   for (const row of rows) {
