@@ -3,6 +3,7 @@ import { fetchNtpEndpoint } from '@/lib/netztransparenz/client';
 import {
   parseGenericNtp,
   parseMarketValues,
+  parseAnnualMarketValues,
   parseSpotMarketPrices,
   parseProjection,
 } from '@/lib/netztransparenz/parser';
@@ -11,10 +12,7 @@ import { EnergyType } from '@/types/energy';
 
 // ── Endpoint → parser routing ────────────────────────────────────────────
 
-const MARKET_VALUE_ENDPOINTS = new Set([
-  'ANNUAL_MARKET_VALUES',
-  'MONTHLY_MARKET_VALUES',
-]);
+const MONTHLY_MARKET_ENDPOINTS = new Set(['MONTHLY_MARKET_VALUES']);
 
 const SPOT_ENDPOINTS = new Set(['SPOT_MARKET_PRICE']);
 
@@ -29,7 +27,17 @@ const PROJECTION_TYPE_MAP: Record<string, EnergyType> = {
 };
 
 function parseEndpointData(endpointKey: string, csv: string): any[] {
-  if (MARKET_VALUE_ENDPOINTS.has(endpointKey)) {
+  if (endpointKey === 'ANNUAL_MARKET_VALUES') {
+    return parseAnnualMarketValues(csv).map(mv => ({
+      timestamp: mv.timestamp,
+      value: mv.value,
+      unit: mv.unit || 'EUR/MWh',
+      source: String(mv.source),
+      type: mv.type,
+    }));
+  }
+
+  if (MONTHLY_MARKET_ENDPOINTS.has(endpointKey)) {
     return parseMarketValues(csv).map(mv => ({
       timestamp: mv.timestamp,
       value: mv.value,

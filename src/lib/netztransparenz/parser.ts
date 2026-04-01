@@ -179,6 +179,58 @@ export function parseMarketValues(csv: string): MarketValue[] {
   return result;
 }
 
+// ─── Annual Market Value Parser (pivoted: years as columns) ─────────────
+
+export function parseAnnualMarketValues(csv: string): MarketValue[] {
+  const rows = parseCSV(csv);
+  if (rows.length === 0) {
+    console.log('[parseAnnualMarketValues] No CSV rows parsed');
+    return [];
+  }
+
+  const headers = Object.keys(rows[0]);
+  // Year columns are 4-digit numbers; the remaining column is the label
+  const yearCols = headers.filter(h => /^\d{4}$/.test(h)).sort();
+  const labelCol = headers.find(h => !/^\d{4}$/.test(h));
+
+  if (yearCols.length === 0 || !labelCol) {
+    console.log('[parseAnnualMarketValues] No year columns found. Headers:', headers.join(', '));
+    return [];
+  }
+
+  // Detect unit from label column header (e.g. "Alle Werte in ct/kWh")
+  const isCtKwh = labelCol.toLowerCase().includes('ct/kwh');
+
+  console.log(`[parseAnnualMarketValues] labelCol="${labelCol}", years=${yearCols.join(',')}, isCtKwh=${isCtKwh}`);
+
+  const result: MarketValue[] = [];
+
+  for (const row of rows) {
+    const techStr = (row[labelCol] ?? '').trim();
+    if (!techStr) continue;
+    const energyType = mapTechnologyToEnergyType(techStr);
+
+    for (const year of yearCols) {
+      const valueStr = row[year] ?? '';
+      if (!valueStr) continue;
+
+      let value = parseGermanNumber(valueStr);
+      if (isNaN(value)) continue;
+      if (isCtKwh) value = value * 10; // ct/kWh → EUR/MWh
+
+      result.push({
+        timestamp: `${year}-01-01T00:00:00.000Z`,
+        type: energyType,
+        value: Math.round(value * 100) / 100,
+        unit: 'EUR/MWh',
+        source: DataSource.NETZTRANSPARENZ,
+      });
+    }
+  }
+
+  return result;
+}
+
 // ─── Generic NTP Parser ─────────────────────────────────────────────────
 
 export function parseGenericNtp(csv: string): any[] {
@@ -243,8 +295,8 @@ export const parseForecast = parseProjection;
 function mapTechnologyToEnergyType(tech: string): EnergyType {
   const t = tech.toLowerCase();
   if (t.includes('solar') || t.includes('pv')) return EnergyType.SOLAR;
-  if (t.includes('offshore')) return EnergyType.WIND_OFFSHORE;
-  if (t.includes('wind')) return EnergyType.WIND_ONSHORE;
+  if (t.includes('offshore') || t.includes('auf see')) return EnergyType.WIND_OFFSHORE;
+  if (t.includes('wind') || t.includes('an land')) return EnergyType.WIND_ONSHORE;
   if (t.includes('biomass') || t.includes('biomasse')) return EnergyType.BIOMASS;
   if (t.includes('wasser') || t.includes('hydro')) return EnergyType.HYDRO;
   return EnergyType.OTHER_RENEWABLE;
