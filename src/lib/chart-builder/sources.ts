@@ -113,20 +113,40 @@ function getNtpLabel(key: string): string {
   return NTP_LABELS[key] || key.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, l => l.toUpperCase());
 }
 
-const NTP_SOURCES: DataSourceDef[] = Object.keys(NTP_CONFIG.endpoints).map(key => ({
-  id: `ntp_${key}`,
-  label: getNtpLabel(key),
-  category: getNtpCategory(key),
-  apiSource: 'Netztransparenz' as const,
-  path: '/api/energy/data',
-  unit: '',
-  valueKey: 'value',
-  endpointKey: key,
-}));
+// Skip generic market value entries — replaced by per-technology sources below
+const SKIP_NTP_KEYS = new Set(['ANNUAL_MARKET_VALUES', 'MONTHLY_MARKET_VALUES']);
+
+const NTP_SOURCES: DataSourceDef[] = Object.keys(NTP_CONFIG.endpoints)
+  .filter(key => !SKIP_NTP_KEYS.has(key))
+  .map(key => ({
+    id: `ntp_${key}`,
+    label: getNtpLabel(key),
+    category: getNtpCategory(key),
+    apiSource: 'Netztransparenz' as const,
+    path: '/api/energy/data',
+    unit: '',
+    valueKey: 'value',
+    endpointKey: key,
+  }));
+
+// ---- Per-technology market value sources ----
+
+const MARKET_VALUE_SOURCES: DataSourceDef[] = [
+  // Annual — Jahresmarktwerte
+  { id: 'ntp_JMW_GESAMT', label: 'Jahresmarktwert (Gesamt)', category: 'prices', apiSource: 'Netztransparenz', path: '/api/energy/data', unit: 'EUR/MWh', valueKey: 'value', endpointKey: 'ANNUAL_MARKET_VALUES', energyType: 'MW_GESAMT' },
+  { id: 'ntp_JMW_WIND_ONSHORE', label: 'Jahresmarktwert Wind Onshore', category: 'prices', apiSource: 'Netztransparenz', path: '/api/energy/data', unit: 'EUR/MWh', valueKey: 'value', endpointKey: 'ANNUAL_MARKET_VALUES', energyType: 'WIND_ONSHORE' },
+  { id: 'ntp_JMW_WIND_OFFSHORE', label: 'Jahresmarktwert Wind Offshore', category: 'prices', apiSource: 'Netztransparenz', path: '/api/energy/data', unit: 'EUR/MWh', valueKey: 'value', endpointKey: 'ANNUAL_MARKET_VALUES', energyType: 'WIND_OFFSHORE' },
+  { id: 'ntp_JMW_SOLAR', label: 'Jahresmarktwert Solar', category: 'prices', apiSource: 'Netztransparenz', path: '/api/energy/data', unit: 'EUR/MWh', valueKey: 'value', endpointKey: 'ANNUAL_MARKET_VALUES', energyType: 'SOLAR' },
+  // Monthly — Monatsmarktwerte
+  { id: 'ntp_MMW_EPEX', label: 'Monatsmarktwert EPEX', category: 'prices', apiSource: 'Netztransparenz', path: '/api/energy/data', unit: 'EUR/MWh', valueKey: 'value', endpointKey: 'MONTHLY_MARKET_VALUES', energyType: 'MW_EPEX' },
+  { id: 'ntp_MMW_WIND_ONSHORE', label: 'Monatsmarktwert Wind Onshore', category: 'prices', apiSource: 'Netztransparenz', path: '/api/energy/data', unit: 'EUR/MWh', valueKey: 'value', endpointKey: 'MONTHLY_MARKET_VALUES', energyType: 'WIND_ONSHORE' },
+  { id: 'ntp_MMW_WIND_OFFSHORE', label: 'Monatsmarktwert Wind Offshore', category: 'prices', apiSource: 'Netztransparenz', path: '/api/energy/data', unit: 'EUR/MWh', valueKey: 'value', endpointKey: 'MONTHLY_MARKET_VALUES', energyType: 'WIND_OFFSHORE' },
+  { id: 'ntp_MMW_SOLAR', label: 'Monatsmarktwert Solar', category: 'prices', apiSource: 'Netztransparenz', path: '/api/energy/data', unit: 'EUR/MWh', valueKey: 'value', endpointKey: 'MONTHLY_MARKET_VALUES', energyType: 'SOLAR' },
+];
 
 // ---- Exports ----
 
-export const ALL_SOURCES: DataSourceDef[] = [...CORE_SOURCES, ...NTP_SOURCES];
+export const ALL_SOURCES: DataSourceDef[] = [...CORE_SOURCES, ...NTP_SOURCES, ...MARKET_VALUE_SOURCES];
 
 export function getSourceById(id: string): DataSourceDef | undefined {
   return ALL_SOURCES.find(s => s.id === id);

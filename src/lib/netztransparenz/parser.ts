@@ -180,6 +180,16 @@ export function parseMarketValues(csv: string): MarketValue[] {
 }
 
 // ─── Annual Market Value Parser (pivoted: years as columns) ─────────────
+// Format: Alle Werte in ct/kWh;2013;2014;...;2025
+//         JW;3,778;3,277;...
+//         JW Wind an Land;3,217;...
+
+const ANNUAL_TECH_MAP: Record<string, string> = {
+  'JW': 'MW_GESAMT',
+  'JW Wind an Land': 'WIND_ONSHORE',
+  'JW Wind auf See': 'WIND_OFFSHORE',
+  'JW Solar': 'SOLAR',
+};
 
 export function parseAnnualMarketValues(csv: string): MarketValue[] {
   const rows = parseCSV(csv);
@@ -189,7 +199,6 @@ export function parseAnnualMarketValues(csv: string): MarketValue[] {
   }
 
   const headers = Object.keys(rows[0]);
-  // Year columns are 4-digit numbers; the remaining column is the label
   const yearCols = headers.filter(h => /^\d{4}$/.test(h)).sort();
   const labelCol = headers.find(h => !/^\d{4}$/.test(h));
 
@@ -198,9 +207,7 @@ export function parseAnnualMarketValues(csv: string): MarketValue[] {
     return [];
   }
 
-  // Detect unit from label column header (e.g. "Alle Werte in ct/kWh")
   const isCtKwh = labelCol.toLowerCase().includes('ct/kwh');
-
   console.log(`[parseAnnualMarketValues] labelCol="${labelCol}", years=${yearCols.join(',')}, isCtKwh=${isCtKwh}`);
 
   const result: MarketValue[] = [];
@@ -208,7 +215,10 @@ export function parseAnnualMarketValues(csv: string): MarketValue[] {
   for (const row of rows) {
     const techStr = (row[labelCol] ?? '').trim();
     if (!techStr) continue;
-    const energyType = mapTechnologyToEnergyType(techStr);
+
+    // Use explicit mapping; skip unknown rows
+    const techType = ANNUAL_TECH_MAP[techStr];
+    if (!techType) continue;
 
     for (const year of yearCols) {
       const valueStr = row[year] ?? '';
@@ -220,7 +230,83 @@ export function parseAnnualMarketValues(csv: string): MarketValue[] {
 
       result.push({
         timestamp: `${year}-01-01T00:00:00.000Z`,
-        type: energyType,
+        type: techType as unknown as EnergyType,
+        value: Math.round(value * 100) / 100,
+        unit: 'EUR/MWh',
+        source: DataSource.NETZTRANSPARENZ,
+      });
+    }
+  }
+
+  return result;
+}
+
+// ─── Monthly Market Values Parser (wide format: tech columns) ──────────
+// Format: Monat;MW-EPEX in ct/kWh;MW Wind Onshore in ct/kWh;...
+
+const MONTHLY_COL_TYPE: Record<string, string> = {
+  'MW-EPEX': 'MW_EPEX',
+  'MW Wind Onshore': 'WIND_ONSHORE',
+  'MW Wind Offshore': 'WIND_OFFSHORE',
+  'MW Solar': 'SOLAR',
+  'MW steuerbar': 'MW_STEUERBAR',
+};
+
+function getMonthlyColType(col: string): string | null {
+  for (const [prefix, type] of Object.entries(MONTHLY_COL_TYPE)) {
+    if (col.startsWith(prefix)) return type;
+  }
+  return null;
+}
+
+export function parseMonthlyMarketValues(csv: string): MarketValue[] {
+  const rows = parseCSV(csv);
+  if (rows.length === 0) {
+    console.log('[parseMonthlyMarketValues] No CSV rows parsed');
+    return [];
+  }
+
+  const headers = Object.keys(rows[0]);
+  console.log('[parseMonthlyMarketValues] Headers:', headers.join(', '));
+
+  // Find date column
+  const dateCol = headers.find(h => /monat|datum|date/i.test(h));
+  if (!dateCol) {
+    console.log('[parseMonthlyMarketValues] No date column found');
+    return [];
+  }
+
+  // Map value columns to technology types
+  const valueCols = headers
+    .map(h => ({ col: h, type: getMonthlyColType(h) }))
+    .filter(c => c.type !== null) as { col: string; type: string }[];
+
+  if (valueCols.length === 0) {
+    console.log('[parseMonthlyMarketValues] No MW value columns found');
+    return [];
+  }
+
+  console.log(`[parseMonthlyMarketValues] dateCol="${dateCol}", valueCols: ${valueCols.map(c => `${c.col} → ${c.type}`).join(', ')}`);
+
+  const isCtKwh = valueCols[0].col.toLowerCase().includes('ct/kwh');
+  const result: MarketValue[] = [];
+
+  for (const row of rows) {
+    const dateStr = (row[dateCol] ?? '').trim();
+    if (!dateStr) continue;
+    const timestamp = parseFlexibleDate(dateStr);
+
+    for (const { col, type } of valueCols) {
+      const valueStr = (row[col] ?? '').trim();
+      if (!valueStr) continue;
+
+      let value = parseGermanNumber(valueStr);
+      if (isNaN(value)) continue;
+      if (isCtKwh) value = value * 10; // ct/kWh → EUR/MWh
+
+      result.push({
+        timestamp,
+        type: type as unknown as EnergyType,
         value: Math.round(value * 100) / 100,
         unit: 'EUR/MWh',
         source: DataSource.NETZTRANSPARENZ,
@@ -233,6 +319,11 @@ export function parseAnnualMarketValues(csv: string): MarketValue[] {
 
 // ─── Generic NTP Parser ─────────────────────────────────────────────────
 
+const GENERIC_SKIP_KEYS = new Set([
+  'Datum', 'Datum von', 'von', '(Uhrzeit) von', 'bis', '(Uhrzeit) bis',
+  'Zeitzone von', 'Zeitzone bis', 'Zeitzone', 'Monat', 'Date',
+]);
+
 export function parseGenericNtp(csv: string): any[] {
   const rows = parseCSV(csv);
   if (rows.length === 0) {
@@ -244,31 +335,28 @@ export function parseGenericNtp(csv: string): any[] {
   const result: any[] = [];
 
   for (const row of rows) {
-    const datum = row['Datum'] ?? row['Monat'] ?? row['Date'] ?? '';
-    const von = row['von'] ?? '';
-    
+    // Flexible date column detection
+    const datum = row['Datum'] ?? row['Datum von'] ?? row['Monat'] ?? row['Date'] ?? '';
+    const von = row['von'] ?? row['(Uhrzeit) von'] ?? '';
+
     if (!datum) continue;
 
     const timestamp = buildTimestamp(datum, von);
-    
+
     // Sum all numeric value columns, skip metadata fields.
-    // For multi-TSO data (e.g. 50Hertz/Amprion/TenneT/TransnetBW columns)
-    // this produces the Germany-wide total, consistent with other parsers.
     let value = 0;
     let unit = 'N/A';
     let hasValue = false;
 
-    const SKIP_KEYS = new Set(['Datum', 'von', 'bis', 'Zeitzone von', 'Zeitzone bis', 'Monat', 'Date']);
-
     for (const [key, val] of Object.entries(row)) {
-      if (SKIP_KEYS.has(key)) continue;
+      if (GENERIC_SKIP_KEYS.has(key)) continue;
       const num = parseGermanNumber(val);
       if (!isNaN(num)) {
         value += num;
         hasValue = true;
-        // Extract unit from first matching header, e.g. "Solar (MW)" → "MW"
+        // Extract unit from first matching header, e.g. "ID AEP in EUR/MWh" → "EUR/MWh"
         if (unit === 'N/A') {
-          const unitMatch = key.match(/\(([^)]+)\)/);
+          const unitMatch = key.match(/in\s+([A-Za-z/€]+)/i) || key.match(/\(([^)]+)\)/);
           if (unitMatch) unit = unitMatch[1];
         }
       }
