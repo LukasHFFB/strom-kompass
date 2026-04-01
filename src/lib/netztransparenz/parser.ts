@@ -286,7 +286,8 @@ export function parseMonthlyMarketValues(csv: string): MarketValue[] {
     return [];
   }
 
-  console.log(`[parseMonthlyMarketValues] dateCol="${dateCol}", valueCols: ${valueCols.map(c => `${c.col} → ${c.type}`).join(', ')}`);
+  const firstDateVal = rows[0]?.[dateCol] ?? '(empty)';
+  console.log(`[parseMonthlyMarketValues] dateCol="${dateCol}", first value="${firstDateVal}", valueCols: ${valueCols.map(c => `${c.col} → ${c.type}`).join(', ')}`);
 
   const isCtKwh = valueCols[0].col.toLowerCase().includes('ct/kwh');
   const result: MarketValue[] = [];
@@ -414,6 +415,14 @@ function buildTimestamp(datum: string, von?: string): string {
   return dateStr;
 }
 
+const GERMAN_MONTHS: Record<string, string> = {
+  januar: '01', februar: '02', 'märz': '03', 'maerz': '03', april: '04',
+  mai: '05', juni: '06', juli: '07', august: '08', september: '09',
+  oktober: '10', november: '11', dezember: '12',
+  jan: '01', feb: '02', 'mär': '03', mar: '03', apr: '04',
+  jun: '06', jul: '07', aug: '08', sep: '09', okt: '10', nov: '11', dez: '12',
+};
+
 function parseFlexibleDate(str: string): string {
   // dd.MM.yyyy HH:mm
   const match1 = str.match(/(\d{2})\.(\d{2})\.(\d{4})\s+(\d{2}):(\d{2})/);
@@ -431,19 +440,37 @@ function parseFlexibleDate(str: string): string {
   if (/^\d{4}-\d{2}-\d{2}$/.test(str)) {
     return `${str}T00:00:00.000Z`;
   }
-  // yyyy-MM (month only, e.g. from Monatsmarktwerte)
+  // yyyy-MM (month only)
   if (/^\d{4}-\d{2}$/.test(str)) {
     return `${str}-01T00:00:00.000Z`;
   }
   // MM.yyyy (German month format)
-  const match3 = str.match(/^(\d{2})\.(\d{4})$/);
+  const match3 = str.match(/^(\d{1,2})\.(\d{4})$/);
   if (match3) {
-    const [, mm, yyyy] = match3;
-    return `${yyyy}-${mm}-01T00:00:00.000Z`;
+    const mm = match3[1].padStart(2, '0');
+    return `${match3[2]}-${mm}-01T00:00:00.000Z`;
   }
-  // yyyy (year only, e.g. from Jahresmarktwerte)
+  // M/yyyy or MM/yyyy
+  const match4 = str.match(/^(\d{1,2})\/(\d{4})$/);
+  if (match4) {
+    const mm = match4[1].padStart(2, '0');
+    return `${match4[2]}-${mm}-01T00:00:00.000Z`;
+  }
+  // German month name + year: "April 2025", "März 2025", "Okt 2025"
+  const match5 = str.match(/^([A-Za-zÄäÖöÜü]+)\s+(\d{4})$/);
+  if (match5) {
+    const mm = GERMAN_MONTHS[match5[1].toLowerCase()];
+    if (mm) return `${match5[2]}-${mm}-01T00:00:00.000Z`;
+  }
+  // yyyy (year only)
   if (/^\d{4}$/.test(str)) {
     return `${str}-01-01T00:00:00.000Z`;
   }
-  return new Date(str).toISOString();
+  // Fallback — guard against invalid dates
+  try {
+    const d = new Date(str);
+    if (!isNaN(d.getTime())) return d.toISOString();
+  } catch { /* ignore */ }
+  console.log(`[parseFlexibleDate] Unrecognized format: "${str}"`);
+  return `1970-01-01T00:00:00.000Z`;
 }
