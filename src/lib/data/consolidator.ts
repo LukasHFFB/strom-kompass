@@ -56,13 +56,24 @@ export async function getConsolidatedPrices(
     return wrapResponse(cached, DataSource.ENTSOE, from, to);
   }
 
-  // 1. Try DB first
+  // 1. Check DB for existing data
   const dbData = await queryPriceData(from, to, DataSource.ENTSOE);
-  if (dbData.length > 0) {
+
+  // 2. Check if DB covers the full range (within 1 day tolerance)
+  const msPerDay = 86_400_000;
+  const rangeMs = to.getTime() - from.getTime();
+  const dbCoversRange = dbData.length > 0 && rangeMs > 0 && (() => {
+    const first = new Date(dbData[0].timestamp).getTime();
+    const last = new Date(dbData[dbData.length - 1].timestamp).getTime();
+    return (first - from.getTime()) < msPerDay && (to.getTime() - last) < 2 * msPerDay;
+  })();
+
+  if (dbCoversRange) {
+    setCache(key, dbData, CACHE_TTL.PRICES);
     return wrapResponse(dbData, DataSource.ENTSOE, from, to);
   }
 
-  // 2. Fallback to API — fetch in chunks to avoid ENTSO-E range limits
+  // 3. Fetch from API in chunks
   const chunks = chunkDateRange(from, to);
   const allData: PriceDataPoint[] = [];
   for (const chunk of chunks) {
@@ -74,8 +85,10 @@ export async function getConsolidatedPrices(
     await upsertPriceData(allData);
   }
 
-  setCache(key, allData, CACHE_TTL.PRICES);
-  return wrapResponse(allData, DataSource.ENTSOE, from, to);
+  // Merge: use API data as base, it's the freshest
+  const finalData = allData.length > 0 ? allData : dbData;
+  setCache(key, finalData, CACHE_TTL.PRICES);
+  return wrapResponse(finalData, DataSource.ENTSOE, from, to);
 }
 
 // ─── Generation Mix ─────────────────────────────────────────────────────
@@ -90,13 +103,23 @@ export async function getGenerationMix(
     return wrapResponse(cached, DataSource.ENTSOE, from, to);
   }
 
-  // 1. Try DB first
+  // 1. Check DB for existing data
   const dbData = await queryGenerationData(from, to, DataSource.ENTSOE);
-  if (dbData.length > 0) {
+
+  const msPerDay = 86_400_000;
+  const rangeMs = to.getTime() - from.getTime();
+  const dbCoversRange = dbData.length > 0 && rangeMs > 0 && (() => {
+    const first = new Date(dbData[0].timestamp).getTime();
+    const last = new Date(dbData[dbData.length - 1].timestamp).getTime();
+    return (first - from.getTime()) < msPerDay && (to.getTime() - last) < 2 * msPerDay;
+  })();
+
+  if (dbCoversRange) {
+    setCache(key, dbData, CACHE_TTL.GENERATION);
     return wrapResponse(dbData, DataSource.ENTSOE, from, to);
   }
 
-  // 2. Fallback to API — fetch in chunks to avoid ENTSO-E range limits
+  // 2. Fetch from API in chunks
   const chunks = chunkDateRange(from, to);
   const allData: GenerationDataPoint[] = [];
   for (const chunk of chunks) {
@@ -108,8 +131,9 @@ export async function getGenerationMix(
     await upsertGenerationData(allData);
   }
 
-  setCache(key, allData, CACHE_TTL.GENERATION);
-  return wrapResponse(allData, DataSource.ENTSOE, from, to);
+  const finalData = allData.length > 0 ? allData : dbData;
+  setCache(key, finalData, CACHE_TTL.GENERATION);
+  return wrapResponse(finalData, DataSource.ENTSOE, from, to);
 }
 
 // ─── Installed Capacity ─────────────────────────────────────────────────

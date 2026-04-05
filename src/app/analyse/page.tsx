@@ -92,8 +92,8 @@ export default function AnalysePage() {
   // Builder state
   const [datasets, setDatasets] = useState<DatasetConfig[]>([]);
   const [chartType, setChartType] = useState<ChartType>('line');
-  const [from, setFrom] = useState(() => daysAgo(4));
-  const [to, setTo] = useState(() => daysAgo(1));
+  const [from, setFrom] = useState(() => daysAgo(3));
+  const [to, setTo] = useState(today);
   const [title, setTitle] = useState('');
   const [aggPeriod, setAggPeriod] = useState<AggPeriod>('none');
   const [aggMethod, setAggMethod] = useState<AggMethod>('avg');
@@ -312,7 +312,7 @@ export default function AnalysePage() {
 
   const applyPreset = useCallback((days: number) => {
     if (days === 0) { setFrom(today()); setTo(today()); }
-    else { setFrom(daysAgo(days)); setTo(daysAgo(1)); }
+    else { setFrom(daysAgo(days)); setTo(today()); }
   }, []);
 
   const handleChartType = useCallback((ct: ChartType) => {

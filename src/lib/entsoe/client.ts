@@ -77,6 +77,19 @@ export async function fetchEntsoe(params: EntsoeParams): Promise<unknown> {
 // ─── Convenience helpers ────────────────────────────────────────────────
 
 /**
+ * Ensure the end date covers the full last day (periodEnd is exclusive in ENTSO-E).
+ * If the date is at midnight, move it to the start of the next day.
+ */
+function ensureEndOfDay(date: Date): Date {
+  if (date.getUTCHours() === 0 && date.getUTCMinutes() === 0) {
+    const d = new Date(date);
+    d.setUTCDate(d.getUTCDate() + 1);
+    return d;
+  }
+  return date;
+}
+
+/**
  * Format a Date as YYYYMMDDHHmm in UTC for the Entso-E API.
  */
 function toEntsoeDate(date: Date): string {
@@ -98,7 +111,7 @@ export async function fetchDayAheadPrices(from: Date, to: Date) {
     in_Domain: ENTSOE_CONFIG.biddingZone,
     out_Domain: ENTSOE_CONFIG.biddingZone,
     periodStart: toEntsoeDate(from),
-    periodEnd: toEntsoeDate(to),
+    periodEnd: toEntsoeDate(ensureEndOfDay(to)),
   });
 }
 
@@ -111,7 +124,7 @@ export async function fetchActualGeneration(from: Date, to: Date) {
     processType: ENTSOE_CONFIG.processTypes.REALISED,
     in_Domain: ENTSOE_CONFIG.biddingZone,
     periodStart: toEntsoeDate(from),
-    periodEnd: toEntsoeDate(to),
+    periodEnd: toEntsoeDate(ensureEndOfDay(to)),
   });
 }
 
@@ -139,6 +152,6 @@ export async function fetchLoad(from: Date, to: Date, biddingZone?: string) {
     processType: ENTSOE_CONFIG.processTypes.REALISED,
     outBiddingZone_Domain: biddingZone || ENTSOE_CONFIG.biddingZone,
     periodStart: toEntsoeDate(from),
-    periodEnd: toEntsoeDate(to),
+    periodEnd: toEntsoeDate(ensureEndOfDay(to)),
   });
 }
